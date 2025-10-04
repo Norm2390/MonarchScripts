@@ -2,12 +2,17 @@
 // @name         Torn OC Role Restrictions (Mutation Specific)
 // @namespace    https://xentac.github.io
 // @version      0.5
-// @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator"). Well paired with https://greasyfork.org/en/scripts/526834-oc-success-chance-2-0.
+// @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator").
 // @author       underko[3362751], xentac[3354782]
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
 // @license      MIT
+// @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
+// @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
+
+// Original Courtesy of Xentac/Underko -> https://update.greasyfork.org/scripts/541951/Torn%20OC%20Role%20Evaluator.user.js
+// Link --> https://greasyfork.org/en/scripts/548447-torn-oc-role-restrictions
 
 // ==/UserScript==
 
@@ -393,5 +398,6 @@
     }
   }
 })();
+
 
 
