@@ -13,8 +13,8 @@
 // @grant       GM.getValue
 // @grant       GM.xmlHttpRequest
 // @license     GNU GPLv3
-// @downloadURL https://update.greasyfork.org/scripts/522974/%5BTORN%5D%20OC%2020%20Helper.user.js
-// @updateURL https://update.greasyfork.org/scripts/522974/%5BTORN%5D%20OC%2020%20Helper.meta.js
+
+
 // ==/UserScript==
 
 //IF DROPDOWN MENU DOESN'T WORK, MANUALLY ADD YOUR API KEY HERE
@@ -2749,3 +2749,4 @@ async function settingsFillSelect() {
   }
   fillMemberIgnoreList()
 }
+
