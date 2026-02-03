@@ -3,7 +3,7 @@
 // @namespace   Violentmonkey Scripts
 // @match       https://www.torn.com/factions.php*
 // @version     5.3.0
-// @author      callmericky [3299880] / whatdoesthespacebardo
+// @author      callmericky [3299880] / whatdoesthespacebardo / JockoWillink (Mutation Adaptation)
 // @description Gives an overview of OC 2.0, showing members not in crimes, members in each crime, and if there are issues with any crimes. Visible when flying.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
 // @connect     tornprobability.com
@@ -2749,4 +2749,5 @@ async function settingsFillSelect() {
   }
   fillMemberIgnoreList()
 }
+
 
