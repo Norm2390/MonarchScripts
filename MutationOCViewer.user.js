@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @connect      tttivqztkjnhenovxbag.supabase.co
 // @run-at       document-idle
+// @updateURL    
 // ==/UserScript==
 
 ;(function() {
@@ -634,3 +635,4 @@
 
 
 })()
+
