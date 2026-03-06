@@ -250,7 +250,7 @@
     wrapper.innerHTML = `
       <div id="ocv-header">
         <div id="ocv-header-left">
-          <span id="ocv-title">OC Daily Briefing</span>
+          <span id="ocv-title">Mutation OC Priorities</span>
           <span id="ocv-meta">Loading...</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -631,5 +631,6 @@
     if (!str) return ""
     return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")
   }
+
 
 })()
