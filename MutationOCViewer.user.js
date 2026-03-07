@@ -3,12 +3,14 @@
 // @namespace    monarchmutation
 // @version      4.0.0
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
+// @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      tttivqztkjnhenovxbag.supabase.co
 // @run-at       document-idle
+// @updateURL 
 // ==/UserScript==
 
 ;(function() {
@@ -755,3 +757,4 @@
   }
 
 })()
+
