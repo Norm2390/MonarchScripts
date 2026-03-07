@@ -277,7 +277,7 @@
       .ocv-roles         { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:4px; }
       .ocv-chip          { display:inline-block; padding:2px 8px; border-radius:3px; font-size:12px; line-height:1.6; }
       .ocv-chip-open     { background:#0d1a0d; border:1px solid #2a7a2a; color:#44aa44; }
-      .ocv-chip-no-cpr   { background:#1a1000; border:1px solid #7a5a00; color:#cc9900; }
+      .ocv-chip-open-no  { background:#1a1000; border:1px solid #7a5a00; color:#cc9900; }
       .ocv-chip-filled   { background:#1e1e1e; border:1px solid #444; color:#888; }
       .ocv-chip-name     { color:#aaa; }
       .ocv-status-icon   { font-size:10px; margin-left:2px; }
@@ -659,7 +659,7 @@
               const reqCpr = getReqCpr(r.role) || r.cpr || null
               const myCpr  = hasId ? getMyMemberCpr(r.role) : null
               const tooLow = hasId && myCpr !== null && reqCpr !== null && myCpr < reqCpr
-              const chipClass = tooLow ? "ocv-chip ocv-chip-no-cpr" : "ocv-chip ocv-chip-open"
+              const chipClass = tooLow ? "ocv-chip ocv-chip-open-no" : "ocv-chip ocv-chip-open"
               let label = escHTML(r.role)
               if (reqCpr) label += ' <span style="font-size:10px;opacity:0.55">| CPR: ' + reqCpr + "+</span>"
               rolesHTML += '<span class="' + chipClass + '">' + label + '</span>'
@@ -757,5 +757,8 @@
   }
 
 })()
+
+})()
+
 
 
