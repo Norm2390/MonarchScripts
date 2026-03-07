@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
-// @namespace    mutationOCViewer
+// @namespace    mutationOCViewerJocko
 // @version      1.0.0
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
@@ -757,3 +757,4 @@
   }
 
 })()
+
