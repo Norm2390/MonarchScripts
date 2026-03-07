@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation — OCViewer
 // @namespace    monarchmutation
-// @version      4.0.0
+// @version      1.0.0
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -759,6 +759,7 @@
 })()
 
 })()
+
 
 
 
