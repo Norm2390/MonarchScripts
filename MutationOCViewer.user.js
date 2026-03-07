@@ -1,16 +1,14 @@
 // ==UserScript==
 // @name         Mutation — OCViewer
-// @namespace    MutationOCViewer
-// @version      1.0.0
-// @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns. This will not work at all without the admin console script.
-// @author       JockoWillink [55408]
+// @namespace    monarchmutation
+// @version      4.0.0
+// @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      tttivqztkjnhenovxbag.supabase.co
 // @run-at       document-idle
-// @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MutationOCViewer.user.js
 // ==/UserScript==
 
 ;(function() {
@@ -615,18 +613,19 @@
 
           open.forEach(function(slot) {
             openSlots.push(slot.position)
-            const reqCpr = getReqCpr(slot.position)
-            const myCpr  = hasId ? getMyMemberCpr(slot.position) : null
-            const meetsReq = hasId && myCpr !== null && (reqCpr === null || myCpr >= reqCpr)
+            const reqCpr   = getReqCpr(slot.position)
+            const myCpr    = hasId ? getMyMemberCpr(slot.position) : null
+            const noData   = hasId && myCpr === null && reqCpr !== null  // has req, no data → treat as ineligible
             const tooLow   = hasId && myCpr !== null && reqCpr !== null && myCpr < reqCpr
+            const ineligible = noData || tooLow
 
-            const chipClass = tooLow ? "ocv-chip ocv-chip-no-cpr" : "ocv-chip ocv-chip-open"
+            const chipClass = ineligible ? "ocv-chip ocv-chip-open-no" : "ocv-chip ocv-chip-open"
             let label = escHTML(slot.position)
             if (hasId && reqCpr) {
               if (myCpr !== null) {
                 label += ' <span style="font-size:10px;opacity:0.75">| ' + myCpr + "/" + reqCpr + "+</span>"
               } else {
-                label += ' <span style="font-size:10px;opacity:0.55">| ' + reqCpr + "+</span>"
+                label += ' <span style="font-size:10px;opacity:0.55">| N/A/' + reqCpr + "+</span>"
               }
             } else if (!hasId && reqCpr) {
               label += ' <span style="font-size:10px;opacity:0.55">| CPR: ' + reqCpr + "+</span>"
@@ -701,23 +700,22 @@
     const qualified = []
 
     if (priorityFull) {
-      // Use full label priority (e.g. Break the Bank with specific #1/#2 ordering)
       priorityFull.forEach(function(roleLabel) {
-        if (openSlots.indexOf(roleLabel) === -1) return  // not open
+        if (openSlots.indexOf(roleLabel) === -1) return
         const req = getReqCpr(roleLabel)
         const my  = getMyCpr(roleLabel)
-        if (req === null || my === null || my >= req) qualified.push(roleLabel)
+        const noData = my === null && req !== null   // has req but no CPR data → exclude
+        if (!noData && (req === null || my >= req)) qualified.push(roleLabel)
       })
     } else {
-      // Use base name priority, match against open slots by stripping suffixes
       priorityBase.forEach(function(baseName) {
-        // Find all open slots whose base name matches
         openSlots.forEach(function(slot) {
           const slotBase = slot.replace(/\s*#\d+$/, "").trim()
           if (slotBase.toLowerCase() !== baseName.toLowerCase()) return
-          const req = getReqCpr(slot)
-          const my  = getMyCpr(slot)
-          if (req === null || my === null || my >= req) {
+          const req    = getReqCpr(slot)
+          const my     = getMyCpr(slot)
+          const noData = my === null && req !== null  // has req but no CPR data → exclude
+          if (!noData && (req === null || my >= req)) {
             if (qualified.indexOf(slot) === -1) qualified.push(slot)
           }
         })
@@ -757,6 +755,3 @@
   }
 
 })()
-
-
-
