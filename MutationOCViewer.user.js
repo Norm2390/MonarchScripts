@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.6
+// @version      1.0.7
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -364,6 +364,7 @@
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <button id="ocv-id-btn" title="Set your Torn ID for CPR matching">${idLabel}</button>
+          ${(userId && userId > 0) ? '<button id="ocv-filter-btn" title="Show only OCs you can join" style="font-size:10px;background:none;border:1px solid #333;border-radius:3px;padding:2px 7px;cursor:pointer;color:#555">⚑ My OCs</button>' : ''}
           <button id="ocv-refresh-btn">&#8635; Refresh</button>
           <button id="ocv-toggle-btn">&#9660; Hide</button>
         </div>
@@ -421,6 +422,44 @@
     document.getElementById("ocv-refresh-btn").addEventListener("click", function(e) {
       e.stopPropagation(); fetchAndRender()
     })
+
+    const filterBtn = document.getElementById("ocv-filter-btn")
+    if (filterBtn) {
+      filterBtn.addEventListener("click", function(e) {
+        e.stopPropagation()
+        const active = filterBtn.dataset.active === "1"
+        if (active) {
+          // Turn off — show all cards
+          filterBtn.dataset.active = "0"
+          filterBtn.style.borderColor = "#333"
+          filterBtn.style.color       = "#555"
+          document.querySelectorAll(".ocv-oc-card").forEach(function(card) {
+            card.style.display = ""
+          })
+          // Restore section labels that may have been hidden
+          document.querySelectorAll(".ocv-section-label").forEach(function(el) {
+            el.style.display = ""
+          })
+        } else {
+          // Turn on — hide cards user can't join
+          filterBtn.dataset.active = "1"
+          filterBtn.style.borderColor = "#44aa44"
+          filterBtn.style.color       = "#44aa44"
+          document.querySelectorAll(".ocv-oc-card").forEach(function(card) {
+            card.style.display = card.dataset.userEligible === "1" ? "" : "none"
+          })
+          // Hide section labels whose entire group is now hidden
+          document.querySelectorAll(".ocv-cards-wrap").forEach(function(wrap) {
+            const allHidden = Array.from(wrap.querySelectorAll(".ocv-oc-card"))
+              .every(function(c) { return c.style.display === "none" })
+            const label = wrap.previousElementSibling
+            if (label && label.classList.contains("ocv-section-label")) {
+              label.style.display = allHidden ? "none" : ""
+            }
+          })
+        }
+      })
+    }
 
     document.getElementById("ocv-id-btn").addEventListener("click", function(e) {
       e.stopPropagation()
@@ -780,7 +819,32 @@
             + rows + '</div></div>'
         }
 
-        html += '<div class="ocv-oc-card pri-' + pri + '" style="background:' + bg + '">'
+        // Determine if user can join any open slot (for filter toggle)
+        let userCanJoin = !hasId  // if no ID, always show
+        if (hasId && openSlots.length > 0) {
+          // Check if at least one open chip is green (eligible)
+          userCanJoin = Array.from(document.querySelectorAll ? [] : []).length >= 0  // placeholder, resolved below
+          userCanJoin = false
+          // Re-examine open slots against CPR
+          if (liveSlots && liveSlots.length) {
+            liveSlots.filter(function(s) { return !s.filled }).forEach(function(slot) {
+              const reqCpr   = getReqCpr(slot.position)
+              const myCpr    = getMyMemberCpr(slot.position)
+              const noData   = myCpr === null && reqCpr !== null
+              const tooLow   = myCpr !== null && reqCpr !== null && myCpr < reqCpr
+              if (!noData && !tooLow) userCanJoin = true
+            })
+          } else if (oc.roles) {
+            oc.roles.filter(function(r) { return r.status !== "filled" }).forEach(function(r) {
+              const reqCpr = getReqCpr(r.role) || r.cpr || null
+              const myCpr  = getMyMemberCpr(r.role)
+              const tooLow = myCpr !== null && reqCpr !== null && myCpr < reqCpr
+              if (!tooLow) userCanJoin = true
+            })
+          }
+        }
+
+        html += '<div class="ocv-oc-card pri-' + pri + '" data-user-eligible="' + (userCanJoin ? "1" : "0") + '" style="background:' + bg + '">'
           + '<div class="ocv-oc-header">' + nameHTML + slotsHTML + badgeHTML + timerHTML + '</div>'
           + rolesHTML + tipHTML + instrHTML + '</div>'
         })   // end visible.forEach
