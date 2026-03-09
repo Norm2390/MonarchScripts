@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.4
+// @version      1.0.5
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -10,7 +10,6 @@
 // @grant        GM_setValue
 // @connect      tttivqztkjnhenovxbag.supabase.co
 // @run-at       document-idle
-// @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MutationOCViewer.user.js
 // @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MutationOCViewer.user.js
 // ==/UserScript==
 
@@ -305,6 +304,46 @@
         font-size:9px; color:#888; border:1px solid #333;
         background:#1a1a1a; border-radius:3px; padding:1px 5px; letter-spacing:1px;
       }
+      /* Tab bar */
+      #ocv-tabbar {
+        display: flex; background: #0e0e0e;
+        border-left: 1px solid #882222; border-right: 1px solid #882222;
+        border-bottom: 1px solid #2a2a2a;
+      }
+      .ocv-tab {
+        padding: 6px 16px; font-size: 10px; font-weight: bold;
+        letter-spacing: 1px; text-transform: uppercase; color: #555;
+        cursor: pointer; border: none; border-bottom: 2px solid transparent;
+        background: none; transition: color 0.15s, border-color 0.15s;
+      }
+      .ocv-tab:hover { color: #aaa; }
+      .ocv-tab.ocv-tab-active { color: #ff8787; border-bottom-color: #c82121; }
+      /* CPR tab body */
+      #ocv-cpr-body {
+        background: #1a1a1a; border: 1px solid #882222; border-top: none;
+        padding: 12px 14px; border-radius: 0 0 4px 4px; display: none;
+      }
+      .ocv-cpr-crime-card {
+        background: #1e1e1e; border: 1px solid #2d2d2d;
+        border-left: 3px solid #882222; border-radius: 4px;
+        padding: 10px 12px; margin-bottom: 6px;
+      }
+      .ocv-cpr-crime-title {
+        font-size: 10px; font-weight: bold; letter-spacing: 2px;
+        text-transform: uppercase; color: #ff8787; margin-bottom: 8px;
+      }
+      .ocv-cpr-role-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 4px 0; border-bottom: 1px solid #2a2a2a; font-size: 12px;
+      }
+      .ocv-cpr-role-row:last-child { border-bottom: none; }
+      .ocv-cpr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+      .ocv-cpr-role-name { flex: 1; color: #ccc; }
+      .ocv-cpr-req { font-size: 10px; color: #888; width: 90px; text-align: right; flex-shrink: 0; }
+      .ocv-cpr-val { font-weight: bold; width: 64px; text-align: right; flex-shrink: 0; }
+      .ocv-cpr-green  { color: #44cc44; }
+      .ocv-cpr-orange { color: #ffaa33; }
+      .ocv-cpr-grey   { color: #555; }
     `
     document.head.appendChild(s)
   }
@@ -329,7 +368,12 @@
           <button id="ocv-toggle-btn">&#9660; Hide</button>
         </div>
       </div>
+      <div id="ocv-tabbar">
+        <button class="ocv-tab ocv-tab-active" data-tab="oc">OC Priorities</button>
+        <button class="ocv-tab" data-tab="cpr">My CPR</button>
+      </div>
       <div id="ocv-body"><div id="ocv-loading">Fetching OC data...</div></div>
+      <div id="ocv-cpr-body"><div style="color:#555;font-size:12px;text-align:center;padding:20px">Loading CPR data...</div></div>
     `
 
     const target = findContainer()
@@ -346,8 +390,32 @@
       if (tgt === "ocv-refresh-btn" || tgt === "ocv-id-btn") return
       const isNowCollapsed = !body.classList.contains("ocv-collapsed")
       body.classList.toggle("ocv-collapsed", isNowCollapsed)
+      // Also collapse/show CPR body if it's active
+      const cprBody = document.getElementById("ocv-cpr-body")
+      const activeTab = document.querySelector(".ocv-tab.ocv-tab-active")
+      if (cprBody && activeTab && activeTab.dataset.tab === "cpr") {
+        cprBody.style.display = isNowCollapsed ? "none" : "block"
+      }
       toggleBtn.textContent = isNowCollapsed ? "▶ Show" : "▼ Hide"
       GM_setValue("ocv-collapsed", isNowCollapsed)
+    })
+
+    // Tab switching
+    document.getElementById("ocv-tabbar").addEventListener("click", function(e) {
+      const tab = e.target.closest(".ocv-tab")
+      if (!tab) return
+      document.querySelectorAll(".ocv-tab").forEach(t => t.classList.remove("ocv-tab-active"))
+      tab.classList.add("ocv-tab-active")
+      const ocBody  = document.getElementById("ocv-body")
+      const cprBody = document.getElementById("ocv-cpr-body")
+      if (tab.dataset.tab === "oc") {
+        ocBody.style.display  = ""
+        cprBody.style.display = "none"
+      } else {
+        ocBody.style.display  = "none"
+        cprBody.style.display = "block"
+        ocvFetchCpr()
+      }
     })
 
     document.getElementById("ocv-refresh-btn").addEventListener("click", function(e) {
@@ -802,5 +870,193 @@
     return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")
   }
 
-})()
+  // ── CPR Tab ───────────────────────────────────────────────────────────────
+  let _ocvCprReqs    = []
+  let _ocvCprFetched = false
 
+  function ocvFetchCpr() {
+    const userId = GM_getValue("ocv-user-id", null)
+    const cprBody = document.getElementById("ocv-cpr-body")
+    if (!cprBody) return
+
+    if (!userId || userId <= 0) {
+      cprBody.innerHTML = '<div style="color:#666;font-size:12px;text-align:center;padding:20px">Set your Torn ID (top right) to view your CPR profile.</div>'
+      return
+    }
+
+    if (_ocvCprFetched) return  // already loaded this session
+    cprBody.innerHTML = '<div style="color:#555;font-size:12px;text-align:center;padding:20px">Loading CPR data...</div>'
+
+    let cprRows  = null
+    let reqRows  = null
+    let done     = 0
+
+    function onBothDone() {
+      if (cprRows === null || reqRows === null) return
+      _ocvCprReqs    = reqRows
+      _ocvCprFetched = true
+      ocvRenderCpr(cprRows, reqRows)
+    }
+
+    // Fetch member CPR by user_id
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: SB_URL + "/rest/v1/oc_member_cpr?user_id=eq." + userId + "&select=crime_name,role_name,cpr",
+      headers: { "apikey": SB_ANON_KEY, "Authorization": "Bearer " + SB_ANON_KEY },
+      onload: function(res) {
+        try { cprRows = JSON.parse(res.responseText) || [] } catch(e) { cprRows = [] }
+        onBothDone()
+      },
+      onerror: function() { cprRows = []; onBothDone() }
+    })
+
+    // Fetch requirements (or use cached)
+    if (_ocvCprReqs.length) {
+      reqRows = _ocvCprReqs
+      onBothDone()
+    } else {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url: SB_URL + "/rest/v1/oc_cpr_requirements?select=*",
+        headers: { "apikey": SB_ANON_KEY, "Authorization": "Bearer " + SB_ANON_KEY },
+        onload: function(res) {
+          try { reqRows = JSON.parse(res.responseText) || [] } catch(e) { reqRows = [] }
+          onBothDone()
+        },
+        onerror: function() { reqRows = []; onBothDone() }
+      })
+    }
+  }
+
+  function ocvRenderCpr(rows, reqs) {
+    const cprBody = document.getElementById("ocv-cpr-body")
+    if (!cprBody) return
+
+    if (!rows.length) {
+      cprBody.innerHTML = '<div style="color:#666;font-size:12px;text-align:center;padding:20px">No CPR data found for your ID.<br><span style="font-size:11px;color:#444">Data updates daily at 06:00 TCT. You may not be on TornStats yet.</span></div>'
+      return
+    }
+
+    // Index TornStats data — strip #N suffix for matching
+    const cprIndex = {}
+    rows.forEach(function(r) {
+      const crimeKey = (r.crime_name || "").toLowerCase()
+      const roleKey  = (r.role_name  || "").toLowerCase().replace(/\s*#\d+$/, "").trim()
+      if (!cprIndex[crimeKey]) cprIndex[crimeKey] = {}
+      cprIndex[crimeKey][roleKey] = r.cpr
+    })
+
+    const crimeOrder = [
+      "ace in the hole", "stacking the deck", "blast from the past",
+      "clinical precision", "break the bank"
+    ]
+    const crimeDisplay = {
+      "ace in the hole":     "Ace in the Hole",
+      "stacking the deck":   "Stacking the Deck",
+      "blast from the past": "Blast from the Past",
+      "clinical precision":  "Clinical Precision",
+      "break the bank":      "Break the Bank"
+    }
+    const borderColors = {
+      "ace in the hole":     "#882222",
+      "stacking the deck":   "#224488",
+      "blast from the past": "#226644",
+      "clinical precision":  "#664422",
+      "break the bank":      "#555577"
+    }
+    const levelGroups = [
+      { level: 9, crimes: ["ace in the hole"] },
+      { level: 8, crimes: ["break the bank", "stacking the deck", "clinical precision"] },
+      { level: 7, crimes: ["blast from the past"] },
+    ]
+
+    let html = '<div style="font-size:11px;color:#555;margin-bottom:10px">CPR data updated daily at 06:00 TCT</div>'
+
+    levelGroups.forEach(function(group) {
+      // Only show the level header if at least one crime in this group has data
+      const hasData = group.crimes.some(function(crimeKey) {
+        const crimeReqs = reqs.filter(function(q) { return q.crime_name.toLowerCase() === crimeKey })
+        const tornRoles = cprIndex[crimeKey] || {}
+        return crimeReqs.length || Object.keys(tornRoles).length
+      })
+      if (!hasData) return
+
+      html += '<div style="font-size:10px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;'
+        + 'color:#666;margin:12px 0 6px 0;padding-bottom:4px;border-bottom:1px solid #2a2a2a">'
+        + 'Level ' + group.level + '</div>'
+
+      group.crimes.forEach(function(crimeKey) {
+        const crimeReqs  = reqs.filter(function(q) { return q.crime_name.toLowerCase() === crimeKey })
+        const tornRoles  = cprIndex[crimeKey] || {}
+        const reqBaseKeys = crimeReqs.map(function(q) { return q.role_name.toLowerCase().replace(/\s*#\d+$/, "").trim() })
+        const extraRoles  = Object.keys(tornRoles).filter(function(rk) { return !reqBaseKeys.includes(rk) })
+        if (!crimeReqs.length && !Object.keys(tornRoles).length) return
+
+        const bc = borderColors[crimeKey] || "#444"
+        html += '<div class="ocv-cpr-crime-card" style="border-left-color:' + bc + '">'
+        html += '<div class="ocv-cpr-crime-title">' + (crimeDisplay[crimeKey] || crimeKey) + '</div>'
+        html += '<div class="ocv-cpr-role-row" style="border-bottom:1px solid #333;margin-bottom:4px;padding-bottom:4px">'
+          + '<span class="ocv-cpr-dot" style="background:transparent"></span>'
+          + '<span class="ocv-cpr-role-name" style="color:#555;font-size:10px;letter-spacing:1px;text-transform:uppercase">Role</span>'
+          + '<span class="ocv-cpr-req" style="color:#555;font-size:10px;letter-spacing:1px;text-transform:uppercase">Requirement</span>'
+          + '<span class="ocv-cpr-val" style="color:#555;font-size:10px;letter-spacing:1px;text-transform:uppercase">Your CPR</span>'
+          + '<span style="font-size:10px;color:#555;letter-spacing:1px;text-transform:uppercase;width:72px;text-align:right;flex-shrink:0">Variance</span>'
+          + '</div>'
+
+        crimeReqs.forEach(function(req) {
+          const baseKey = req.role_name.toLowerCase().replace(/\s*#\d+$/, "").trim()
+          const cpr     = (tornRoles[baseKey] !== undefined) ? tornRoles[baseKey] : null
+          const minCpr  = req.min_cpr
+
+          let dotColor, valClass
+          if (cpr === null)         { dotColor = "#444";    valClass = "ocv-cpr-grey" }
+          else if (minCpr === null) { dotColor = "#44aa44"; valClass = "ocv-cpr-green" }
+          else if (cpr >= minCpr)   { dotColor = "#44aa44"; valClass = "ocv-cpr-green" }
+          else                      { dotColor = "#ffaa33"; valClass = "ocv-cpr-orange" }
+
+          const cprDisplay = cpr !== null ? cpr : "—"
+          const reqDisplay = minCpr !== null ? minCpr + "+" : "No req."
+
+          let deltaHTML = ""
+          if (cpr !== null && minCpr !== null) {
+            const diff = cpr - minCpr
+            let dc, dt
+            if (diff === 0) {
+              dc = "#2a7a2a"; dt = "✓ exact"
+            } else if (diff > 0) {
+              dc = diff >= 15 ? "#00ff88" : diff >= 8 ? "#44cc44" : diff >= 3 ? "#2a7a2a" : "#1a4a1a"
+              dt = "+" + diff + " over"
+            } else {
+              dc = diff <= -21 ? "#ff2222" : diff <= -13 ? "#cc2222" : diff <= -6 ? "#cc4400" : diff <= -3 ? "#cc6600" : "#cc7700"
+              dt = diff + " short"
+            }
+            deltaHTML = '<span style="font-size:10px;font-weight:bold;color:' + dc + ';width:72px;text-align:right;flex-shrink:0">' + dt + '</span>'
+          }
+
+          html += '<div class="ocv-cpr-role-row">'
+            + '<span class="ocv-cpr-dot" style="background:' + dotColor + '"></span>'
+            + '<span class="ocv-cpr-role-name">' + escHTML(req.role_name) + '</span>'
+            + '<span class="ocv-cpr-req">' + reqDisplay + '</span>'
+            + '<span class="ocv-cpr-val ' + valClass + '">' + cprDisplay + '</span>'
+            + deltaHTML
+            + '</div>'
+        })
+
+        extraRoles.forEach(function(roleKey) {
+          const cpr = tornRoles[roleKey]
+          html += '<div class="ocv-cpr-role-row">'
+            + '<span class="ocv-cpr-dot" style="background:#44aa44"></span>'
+            + '<span class="ocv-cpr-role-name" style="text-transform:capitalize">' + escHTML(roleKey) + '</span>'
+            + '<span class="ocv-cpr-req">No req.</span>'
+            + '<span class="ocv-cpr-val ocv-cpr-green">' + cpr + '</span>'
+            + '</div>'
+        })
+
+        html += '</div>'
+      })
+    })
+
+    cprBody.innerHTML = html
+  }
+
+})()
