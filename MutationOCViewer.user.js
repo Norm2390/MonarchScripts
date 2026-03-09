@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.1
+// @version      1.0.2
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -249,6 +249,7 @@
       .ocv-badge-normal { background:#1f1111; border:1px solid #882222; color:#ff8787; }
       .ocv-badge-low    { background:#222233; border:1px solid #555577; color:#8888aa; }
       .ocv-badge-info   { background:#1a2a1a; border:1px solid #448844; color:#88cc88; }
+      .ocv-badge-hold   { background:#1a1500; border:1px solid #7a6500; color:#ccaa00; }
       .ocv-ann-msg      { font-size: 13px; color: #e8e8e8; }
       .ocv-income-bar {
         background: #0d1a0d; border: 1px solid #2a5a2a;
@@ -263,6 +264,7 @@
       .ocv-oc-card:last-child { border-bottom: 1px solid #2a2a2a; }
       .ocv-oc-card.pri-urgent { border-left-color: #c82121; }
       .ocv-oc-card.pri-low    { border-left-color: #444; }
+      .ocv-oc-card.pri-hold   { border-left-color: #7a6500; }
       .ocv-oc-header {
         display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 6px;
       }
@@ -522,10 +524,11 @@
 
       // Group by priority for subsections, preserving urgency sort within each group
       const groups = [
-        { key: "urgent", label: "URGENT",  color: "#ff4444" },
-        { key: "normal", label: "NORMAL",  color: "#ff8787" },
-        { key: "low",    label: "LOW",     color: "#8888cc" },
-        { key: "info",   label: "INFO",    color: "#55bb55" },
+        { key: "urgent", label: "URGENT",        color: "#ff4444" },
+        { key: "normal", label: "NORMAL",        color: "#ff8787" },
+        { key: "low",    label: "LOW",           color: "#8888cc" },
+        { key: "hold",   label: "HOLD OFF JOINING FOR NOW", color: "#ccaa00" },
+        { key: "info",   label: "INFO",          color: "#55bb55" },
       ]
 
       let cardIdx  = 0
@@ -591,7 +594,7 @@
         const slotsHTML = totalCount ? '<span class="ocv-slots">[ ' + filledCount + "/" + totalCount + ' filled ]</span>' : ""
 
         // Priority badge
-        const badgeMap = { urgent:"ocv-badge-urgent", normal:"ocv-badge-normal", low:"ocv-badge-low", info:"ocv-badge-info" }
+        const badgeMap = { urgent:"ocv-badge-urgent", normal:"ocv-badge-normal", low:"ocv-badge-low", info:"ocv-badge-info", hold:"ocv-badge-hold" }
         const badgeHTML = '<span class="ocv-badge ' + (badgeMap[pri] || "ocv-badge-normal") + '">' + pri.toUpperCase() + '</span>'
 
         // Timer
@@ -685,7 +688,7 @@
             above72: "Stall ⏱, if Above 72:00",
             general: "Stall ⏱, Instructions"
           }
-          const typeColor = { stall: "#ffaa33", cpr: "#55bbdd", note: "#9999cc" }
+          const typeColor = { stall: "#c8c800", cpr: "#55bbdd", note: "#9999cc" }
           let rows = instrs.map(function(r) {
             const color    = typeColor[r.type] || "#aaa"
             const condHead = r.cond && condLabels[r.cond]
