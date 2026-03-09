@@ -10,6 +10,7 @@
 // @grant        GM_setValue
 // @connect      tttivqztkjnhenovxbag.supabase.co
 // @run-at       document-idle
+// @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MutationOCViewer.user.js
 // @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MutationOCViewer.user.js
 // ==/UserScript==
 
@@ -802,3 +803,4 @@
   }
 
 })()
+
