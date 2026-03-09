@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.7
+// @version      1.0.8
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -429,22 +429,21 @@
         e.stopPropagation()
         const active = filterBtn.dataset.active === "1"
         if (active) {
-          // Turn off — show all cards
           filterBtn.dataset.active = "0"
           filterBtn.style.borderColor = "#333"
           filterBtn.style.color       = "#555"
+          GM_setValue("ocv-filter-active", false)
           document.querySelectorAll(".ocv-oc-card").forEach(function(card) {
             card.style.display = ""
           })
-          // Restore section labels that may have been hidden
           document.querySelectorAll(".ocv-section-label").forEach(function(el) {
             el.style.display = ""
           })
         } else {
-          // Turn on — hide cards user can't join
           filterBtn.dataset.active = "1"
           filterBtn.style.borderColor = "#44aa44"
           filterBtn.style.color       = "#44aa44"
+          GM_setValue("ocv-filter-active", true)
           document.querySelectorAll(".ocv-oc-card").forEach(function(card) {
             card.style.display = card.dataset.userEligible === "1" ? "" : "none"
           })
@@ -468,6 +467,7 @@
       GM_setValue("ocv-user-id", null)
       _ocvCprFetched  = false   // reset CPR cache
       _ocvGrowthCache = null    // reset growth cache
+      GM_setValue("ocv-filter-active", false)  // reset filter
       showIdPrompt(function() { injectPanel(); fetchAndRender() })
     })
   }
@@ -575,13 +575,15 @@
     // Announcements
     const anns = briefing.announcements || []
     if (anns.length) {
+      const annCollapsed = GM_getValue("ocv-ann-collapsed", false)
       html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
         + '<span style="font-size:12px;font-weight:bold;letter-spacing:3px;color:#888;text-transform:uppercase">Announcements</span>'
         + '<span style="flex:1;height:1px;background:#444;opacity:0.6"></span>'
         + '<button class="ocv-instr-toggle" data-target="ocv-announcements-body" '
-        + 'style="background:none;border:none;color:#555;font-size:11px;cursor:pointer;padding:0 2px;letter-spacing:1px">▼</button>'
+        + 'style="background:none;border:none;color:#555;font-size:11px;cursor:pointer;padding:0 2px;letter-spacing:1px">'
+        + (annCollapsed ? "▶" : "▼") + '</button>'
         + '</div>'
-      html += '<div id="ocv-announcements-body" style="border:1px solid #2a2a2a;border-radius:4px;overflow:hidden;margin-bottom:12px">'
+      html += '<div id="ocv-announcements-body" style="display:' + (annCollapsed ? "none" : "block") + ';border:1px solid #2a2a2a;border-radius:4px;overflow:hidden;margin-bottom:12px">'
       anns.forEach(function(a) {
         const cls = "ocv-badge ocv-badge-" + (a.level || "normal")
         html += '<div class="ocv-ann-row"><span class="' + cls + '">' + (a.level || "normal").toUpperCase() + '</span>'
@@ -854,6 +856,27 @@
 
     body.innerHTML = html
 
+    // Restore filter state if it was active
+    if (hasId && GM_getValue("ocv-filter-active", false)) {
+      const filterBtn = document.getElementById("ocv-filter-btn")
+      if (filterBtn) {
+        filterBtn.dataset.active    = "1"
+        filterBtn.style.borderColor = "#44aa44"
+        filterBtn.style.color       = "#44aa44"
+        document.querySelectorAll(".ocv-oc-card").forEach(function(card) {
+          card.style.display = card.dataset.userEligible === "1" ? "" : "none"
+        })
+        document.querySelectorAll(".ocv-cards-wrap").forEach(function(wrap) {
+          const allHidden = Array.from(wrap.querySelectorAll(".ocv-oc-card"))
+            .every(function(c) { return c.style.display === "none" })
+          const label = wrap.previousElementSibling
+          if (label && label.classList.contains("ocv-section-label")) {
+            label.style.display = allHidden ? "none" : ""
+          }
+        })
+      }
+    }
+
     // Instruction panel toggles
     body.addEventListener("click", function(e) {
       const btn = e.target.closest(".ocv-instr-toggle")
@@ -863,6 +886,10 @@
       const open = target.style.display !== "none"
       target.style.display = open ? "none" : "block"
       btn.textContent = (open ? "▶" : "▼") + btn.textContent.slice(1)
+      // Persist announcements collapsed state
+      if (btn.dataset.target === "ocv-announcements-body") {
+        GM_setValue("ocv-ann-collapsed", open)
+      }
     })
 
     if (_timerInterval) clearInterval(_timerInterval)
