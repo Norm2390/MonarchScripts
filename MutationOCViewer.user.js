@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.5
+// @version      1.0.6
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -424,10 +424,11 @@
 
     document.getElementById("ocv-id-btn").addEventListener("click", function(e) {
       e.stopPropagation()
-      // Remove panel so it re-injects cleanly after prompt
       const w = document.getElementById("ocv-wrapper")
       if (w) w.remove()
-      GM_setValue("ocv-user-id", null)  // reset so prompt shows
+      GM_setValue("ocv-user-id", null)
+      _ocvCprFetched  = false   // reset CPR cache
+      _ocvGrowthCache = null    // reset growth cache
       showIdPrompt(function() { injectPanel(); fetchAndRender() })
     })
   }
@@ -871,8 +872,9 @@
   }
 
   // ── CPR Tab ───────────────────────────────────────────────────────────────
-  let _ocvCprReqs    = []
-  let _ocvCprFetched = false
+  let _ocvCprReqs     = []
+  let _ocvCprFetched  = false
+  let _ocvGrowthCache = null   // null = not fetched; {} = fetched, keyed by crime_name
 
   function ocvFetchCpr() {
     const userId = GM_getValue("ocv-user-id", null)
@@ -992,8 +994,9 @@
         const extraRoles  = Object.keys(tornRoles).filter(function(rk) { return !reqBaseKeys.includes(rk) })
         if (!crimeReqs.length && !Object.keys(tornRoles).length) return
 
+        const cardId  = "ocv-card-" + crimeKey.replace(/\s+/g, "-")
         const bc = borderColors[crimeKey] || "#444"
-        html += '<div class="ocv-cpr-crime-card" style="border-left-color:' + bc + '">'
+        html += '<div class="ocv-cpr-crime-card" id="' + cardId + '" style="border-left-color:' + bc + '">'
         html += '<div class="ocv-cpr-crime-title">' + (crimeDisplay[crimeKey] || crimeKey) + '</div>'
         html += '<div class="ocv-cpr-role-row" style="border-bottom:1px solid #333;margin-bottom:4px;padding-bottom:4px">'
           + '<span class="ocv-cpr-dot" style="background:transparent"></span>'
@@ -1004,9 +1007,11 @@
           + '</div>'
 
         crimeReqs.forEach(function(req) {
-          const baseKey = req.role_name.toLowerCase().replace(/\s*#\d+$/, "").trim()
-          const cpr     = (tornRoles[baseKey] !== undefined) ? tornRoles[baseKey] : null
-          const minCpr  = req.min_cpr
+          const baseKey  = req.role_name.toLowerCase().replace(/\s*#\d+$/, "").trim()
+          const cpr      = (tornRoles[baseKey] !== undefined) ? tornRoles[baseKey] : null
+          const minCpr   = req.min_cpr
+          const roleSlug = req.role_name.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9\-]/g, "")
+          const valId    = cardId + "-" + roleSlug
 
           let dotColor, valClass
           if (cpr === null)         { dotColor = "#444";    valClass = "ocv-cpr-grey" }
@@ -1037,26 +1042,210 @@
             + '<span class="ocv-cpr-dot" style="background:' + dotColor + '"></span>'
             + '<span class="ocv-cpr-role-name">' + escHTML(req.role_name) + '</span>'
             + '<span class="ocv-cpr-req">' + reqDisplay + '</span>'
-            + '<span class="ocv-cpr-val ' + valClass + '">' + cprDisplay + '</span>'
+            + '<span class="ocv-cpr-val ' + valClass + '" id="' + valId + '" data-cpr="' + (cpr !== null ? cpr : "") + '">'
+            + cprDisplay + '</span>'
             + deltaHTML
             + '</div>'
         })
 
         extraRoles.forEach(function(roleKey) {
-          const cpr = tornRoles[roleKey]
+          const cpr      = tornRoles[roleKey]
+          const roleSlug = roleKey.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9\-]/g, "")
+          const valId    = cardId + "-" + roleSlug
           html += '<div class="ocv-cpr-role-row">'
             + '<span class="ocv-cpr-dot" style="background:#44aa44"></span>'
             + '<span class="ocv-cpr-role-name" style="text-transform:capitalize">' + escHTML(roleKey) + '</span>'
             + '<span class="ocv-cpr-req">No req.</span>'
-            + '<span class="ocv-cpr-val ocv-cpr-green">' + cpr + '</span>'
+            + '<span class="ocv-cpr-val ocv-cpr-green" id="' + valId + '" data-cpr="' + cpr + '">' + cpr + '</span>'
             + '</div>'
         })
 
-        html += '</div>'
-      })
+        html += '</div>'  // close crime card
+
+        // Growth toggle — lazy loads on click
+        const growthId = "ocv-growth-" + crimeKey.replace(/\s+/g, "-")
+        html += '<div style="text-align:right;margin-top:-4px;margin-bottom:6px">'
+          + '<button class="ocv-growth-btn" data-crime="' + escHTML(crimeKey) + '" data-panel="' + growthId + '" data-card="' + cardId + '" '
+          + 'style="background:none;border:none;color:#336655;font-size:10px;cursor:pointer;letter-spacing:1px;padding:2px 0">▶ Show Growth</button>'
+          + '</div>'
+          + '<div id="' + growthId + '" style="display:none;margin-bottom:8px"></div>'
+      })  // end group.crimes.forEach
+    })  // end levelGroups.forEach
+
+    // Wire growth toggles
+    cprBody.addEventListener("click", function(e) {
+      const btn = e.target.closest(".ocv-growth-btn")
+      if (btn) {
+        const panelId  = btn.dataset.panel
+        const crimeKey = btn.dataset.crime
+        const cardId   = btn.dataset.card
+        const panel    = document.getElementById(panelId)
+        if (!panel) return
+        const open = panel.style.display !== "none"
+        if (open) {
+          panel.style.display = "none"
+          btn.textContent = "▶ Show Growth"
+          btn.style.color = "#336655"
+          ocvClearDeltas(cardId)
+        } else {
+          panel.style.display = "block"
+          btn.textContent = "▼ Hide Growth"
+          btn.style.color = "#44aa77"
+          if (!panel.dataset.loaded) {
+            ocvFetchGrowth(crimeKey, cardId, panel)
+            panel.dataset.loaded = "1"
+          }
+        }
+        return
+      }
+
+      // Period selector button clicks
+      const periodBtn = e.target.closest(".ocv-period-btn")
+      if (periodBtn) {
+        const cardId  = periodBtn.dataset.card
+        const days    = parseInt(periodBtn.dataset.days)
+        const panel   = periodBtn.closest(".ocv-growth-panel")
+        if (!panel) return
+        panel.querySelectorAll(".ocv-period-btn").forEach(function(b) {
+          b.style.borderColor = "#2a2a2a"
+          b.style.color       = "#555"
+        })
+        periodBtn.style.borderColor = "#44aa77"
+        periodBtn.style.color       = "#44aa77"
+        ocvApplyDeltas(cardId, days, panel._historyByRole)
+      }
     })
 
     cprBody.innerHTML = html
+  }
+
+  function ocvFetchGrowth(crimeKey, cardId, panel) {
+    const userId = GM_getValue("ocv-user-id", null)
+    if (!userId) return
+
+    // If already cached, serve immediately — zero API calls
+    if (_ocvGrowthCache !== null) {
+      ocvRenderGrowth(crimeKey, cardId, _ocvGrowthCache[crimeKey] || [], panel)
+      return
+    }
+
+    panel.innerHTML = '<div style="color:#555;font-size:11px;padding:6px 0">Loading growth data...</div>'
+
+    const since = new Date()
+    since.setFullYear(since.getFullYear() - 1)
+    const sinceStr = since.toISOString().split("T")[0]
+
+    // Fetch ALL crimes for this user in one request — cache covers all panels
+    GM_xmlhttpRequest({
+      method: "GET",
+      url: SB_URL + "/rest/v1/oc_member_cpr_history"
+        + "?user_id=eq." + userId
+        + "&recorded_date=gte." + sinceStr
+        + "&select=crime_name,role_name,cpr,recorded_date"
+        + "&order=recorded_date.asc",
+      headers: { "apikey": SB_ANON_KEY, "Authorization": "Bearer " + SB_ANON_KEY },
+      onload: function(res) {
+        try {
+          const rows = JSON.parse(res.responseText) || []
+
+          // Build cache: { crimeName: [ {role_name, cpr, recorded_date}, ... ] }
+          _ocvGrowthCache = {}
+          rows.forEach(function(r) {
+            const k = r.crime_name
+            if (!_ocvGrowthCache[k]) _ocvGrowthCache[k] = []
+            _ocvGrowthCache[k].push(r)
+          })
+
+          ocvRenderGrowth(crimeKey, cardId, _ocvGrowthCache[crimeKey] || [], panel)
+        } catch(e) {
+          panel.innerHTML = '<div style="color:#cc4444;font-size:11px;padding:6px 0">Failed to load growth data.</div>'
+        }
+      },
+      onerror: function() {
+        panel.innerHTML = '<div style="color:#cc4444;font-size:11px;padding:6px 0">Network error.</div>'
+      }
+    })
+  }
+
+  function ocvRenderGrowth(crimeKey, cardId, rows, panel) {
+    if (!rows.length) {
+      panel.innerHTML = '<div style="color:#555;font-size:11px;padding:6px 8px;background:#111;border-radius:3px">No history yet — snapshots are taken every Sunday. Check back next week.</div>'
+      return
+    }
+
+    // Group by role, store on panel element for period switching
+    const byRole = {}
+    rows.forEach(function(r) {
+      if (!byRole[r.role_name]) byRole[r.role_name] = []
+      byRole[r.role_name].push({ date: r.recorded_date, cpr: r.cpr })
+    })
+    panel._historyByRole = byRole
+    panel.classList.add("ocv-growth-panel")
+
+    const periods = [
+      { label: "4w",  days: 28  },
+      { label: "12w", days: 84  },
+      { label: "6mo", days: 180 },
+      { label: "1yr", days: 365 },
+    ]
+
+    // Period selector bar
+    let html = '<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#111;border-radius:3px">'
+      + '<span style="font-size:10px;color:#555;letter-spacing:1px;text-transform:uppercase;flex:1">Growth period:</span>'
+    periods.forEach(function(p, i) {
+      const active = i === 0
+      html += '<button class="ocv-period-btn" data-card="' + cardId + '" data-days="' + p.days + '" '
+        + 'style="background:none;border:1px solid ' + (active ? "#44aa77" : "#2a2a2a") + ';border-radius:3px;'
+        + 'color:' + (active ? "#44aa77" : "#555") + ';font-size:10px;padding:2px 8px;cursor:pointer">'
+        + p.label + '</button>'
+    })
+    html += '</div>'
+    panel.innerHTML = html
+
+    // Apply default period (4w)
+    ocvApplyDeltas(cardId, 28, byRole)
+  }
+
+  function ocvApplyDeltas(cardId, days, byRole) {
+    if (!byRole) return
+    const today    = new Date()
+    const msPerDay = 86400000
+    const targetStr = new Date(today - days * msPerDay).toISOString().split("T")[0]
+
+    // Clear existing badges first
+    ocvClearDeltas(cardId)
+
+    Object.keys(byRole).forEach(function(roleName) {
+      const entries  = byRole[roleName]
+      const roleSlug = roleName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9\-]/g, "")
+      const cell     = document.getElementById(cardId + "-" + roleSlug)
+      if (!cell) return
+
+      const nowCpr = parseInt(cell.dataset.cpr)
+      if (isNaN(nowCpr)) return
+
+      // Most recent entry at or before target date
+      let pastEntry = null
+      entries.forEach(function(e) { if (e.date <= targetStr) pastEntry = e })
+      if (!pastEntry) return  // no data that far back
+
+      const diff = nowCpr - pastEntry.cpr
+      if (diff === 0) return  // no change, show nothing
+
+      const color = diff > 0 ? "#44cc44" : "#cc4444"
+      const label = diff > 0 ? "(+" + diff + ")" : "(" + diff + ")"
+      const badge = document.createElement("span")
+      badge.className   = "ocv-growth-badge"
+      badge.textContent = " " + label
+      badge.style.cssText = "font-size:10px;font-weight:bold;color:" + color + ";margin-left:4px"
+      cell.appendChild(badge)
+    })
+  }
+
+  function ocvClearDeltas(cardId) {
+    const card = document.getElementById(cardId)
+    if (!card) return
+    card.querySelectorAll(".ocv-growth-badge").forEach(function(b) { b.remove() })
   }
 
 })()
