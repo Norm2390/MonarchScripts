@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.0
+// @version      1.0.1
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -674,17 +674,57 @@
           tipHTML = buildProTip(crimeKey, openSlots, getReqCpr, getMyMemberCpr)
         }
 
-        const notesHTML = oc.notes ? '<div class="ocv-notes">' + escHTML(oc.notes) + '</div>' : ""
+        // Collapsible instructions section
+        let instrHTML = ""
+        const instrs = oc.instructions || []
+        if (instrs.length) {
+          const instrId = "ocv-instr-" + cardIdx
+          const condLabels = {
+            below24: "Stall ⏱, if Below 24:00",
+            above48: "Stall ⏱, if Above 48:00",
+            above72: "Stall ⏱, if Above 72:00",
+            general: "Stall ⏱, Instructions"
+          }
+          const typeColor = { stall: "#ffaa33", cpr: "#55bbdd", note: "#9999cc" }
+          let rows = instrs.map(function(r) {
+            const color    = typeColor[r.type] || "#aaa"
+            const condHead = r.cond && condLabels[r.cond]
+              ? '<span style="color:' + color + ';font-weight:bold">' + condLabels[r.cond] + ':</span> '
+              : r.type === "cpr"  ? '<span style="color:' + color + ';font-weight:bold">Hard CPR Requirements:</span> '
+              : r.type === "note" ? '<span style="color:#888;font-weight:bold">Note:</span> '
+              : ""
+            return '<div style="padding:4px 0;border-bottom:1px solid #2a2a2a">'
+              + condHead
+              + '<span style="color:#ccc;font-size:12px">' + escHTML(r.text) + '</span>'
+              + '</div>'
+          }).join("")
+          instrHTML = '<div style="margin-top:5px">'
+            + '<button class="ocv-instr-toggle" data-target="' + instrId + '" '
+            + 'style="background:none;border:none;color:#666;font-size:10px;cursor:pointer;padding:0;letter-spacing:1px">▼ INSTRUCTIONS (' + instrs.length + ')</button>'
+            + '<div id="' + instrId + '" style="display:block;margin-top:5px;padding:6px 8px;background:#111;border:1px solid #2a2a2a;border-radius:3px">'
+            + rows + '</div></div>'
+        }
 
         html += '<div class="ocv-oc-card pri-' + pri + '" style="background:' + bg + '">'
           + '<div class="ocv-oc-header">' + nameHTML + slotsHTML + badgeHTML + timerHTML + '</div>'
-          + rolesHTML + notesHTML + tipHTML + '</div>'
+          + rolesHTML + tipHTML + instrHTML + '</div>'
         })   // end visible.forEach
         html += '</div>'  // close this group's ocv-cards-wrap
       })     // end groups.forEach
     }
 
     body.innerHTML = html
+
+    // Instruction panel toggles
+    body.addEventListener("click", function(e) {
+      const btn = e.target.closest(".ocv-instr-toggle")
+      if (!btn) return
+      const target = document.getElementById(btn.dataset.target)
+      if (!target) return
+      const open = target.style.display !== "none"
+      target.style.display = open ? "none" : "block"
+      btn.textContent = (open ? "▶" : "▼") + btn.textContent.slice(1)
+    })
 
     if (_timerInterval) clearInterval(_timerInterval)
     _timerInterval = setInterval(tickCountdowns, 1000)
@@ -757,4 +797,3 @@
   }
 
 })()
-
