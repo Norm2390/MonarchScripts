@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.2
+// @version      1.0.3
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php*
@@ -469,8 +469,10 @@
       html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
         + '<span style="font-size:12px;font-weight:bold;letter-spacing:3px;color:#888;text-transform:uppercase">Announcements</span>'
         + '<span style="flex:1;height:1px;background:#444;opacity:0.6"></span>'
+        + '<button class="ocv-instr-toggle" data-target="ocv-announcements-body" '
+        + 'style="background:none;border:none;color:#555;font-size:11px;cursor:pointer;padding:0 2px;letter-spacing:1px">▼</button>'
         + '</div>'
-      html += '<div style="border:1px solid #2a2a2a;border-radius:4px;overflow:hidden;margin-bottom:12px">'
+      html += '<div id="ocv-announcements-body" style="border:1px solid #2a2a2a;border-radius:4px;overflow:hidden;margin-bottom:12px">'
       anns.forEach(function(a) {
         const cls = "ocv-badge ocv-badge-" + (a.level || "normal")
         html += '<div class="ocv-ann-row"><span class="' + cls + '">' + (a.level || "normal").toUpperCase() + '</span>'
