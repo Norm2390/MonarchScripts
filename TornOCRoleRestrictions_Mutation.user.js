@@ -129,10 +129,10 @@
       { role: "Thief #2", influence: 34.03, lower: 70 },
     ],
     "Stacking the Deck": [
-      { role: "Cat Burglar", influence: 31.99, lower: 75 },
+      { role: "Cat Burglar", influence: 31.99, lower: 71 },
       { role: "Driver", influence: 3.86, lower: 68 },
-      { role: "Hacker", influence: 25.64, lower: 63 },
-      { role: "Imitator", influence: 38.52, lower: 70 },
+      { role: "Hacker", influence: 25.64, lower: 71 },
+      { role: "Imitator", influence: 38.52, lower: 71 },
     ],
     "Clinical Precision": [
       { role: "Imitator", influence: 41.51, lower: 74 },
@@ -141,11 +141,11 @@
       { role: "Cleaner", influence: 21.71, lower: 72 },
     ],
     "Ace in the Hole": [
-      { role: "Imitator", influence: 13.73, lower: 65 },
-      { role: "Muscle #1", influence: 18.55, lower: 65 },
-      { role: "Muscle #2", influence: 18.88, lower: 72 },
-      { role: "Hacker", influence: 37.49, lower: 75 },
-      { role: "Driver", influence: 11.35, lower: 60 },
+      { role: "Imitator", influence: 13.73, lower: 69 },
+      { role: "Muscle #1", influence: 18.55, lower: 68 },
+      { role: "Muscle #2", influence: 18.88, lower: 68 },
+      { role: "Hacker", influence: 37.49, lower: 68 },
+      { role: "Driver", influence: 11.35, lower: 63 },
     ],
   };
 
@@ -398,6 +398,7 @@
     }
   }
 })();
+
 
 
 
