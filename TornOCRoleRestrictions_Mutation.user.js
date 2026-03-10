@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn OC Role Restrictions (Mutation Specific)
 // @namespace    https://xentac.github.io
-// @version      0.5
+// @version      1.0
 // @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator").
 // @author       underko[3362751], xentac[3354782]
 // @match        https://www.torn.com/factions.php*
@@ -64,7 +64,7 @@
       { role: "Looter #3", influence: 9.83, lower: 65 },
     ],
     "Stage Fright": [
-      { role: "Enforcer", influence: 16.89, lower: 70 },
+      { role: "Enforcer", influence: 16.89, lower: 71 },
       { role: "Muscle #1", influence: 21.92, lower: 72 },
       { role: "Muscle #2", influence: 2.09, lower: 50 },
       { role: "Muscle #3", influence: 9.49, lower: 70 },
@@ -398,6 +398,7 @@
     }
   }
 })();
+
 
 
 
