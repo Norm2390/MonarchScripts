@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.8
+// @version      1.0.9
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
-// @match        https://www.torn.com/factions.php*
+// @match        https://www.torn.com/factions.php?step=your&type=1*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -66,20 +66,42 @@
     }
   }
 
-  if (findContainer()) {
-    boot()
-  } else {
-    const obs = new MutationObserver(function() {
-      if (findContainer()) { obs.disconnect(); boot() }
-    })
-    obs.observe(document.body || document.documentElement, { childList: true, subtree: true })
-    setTimeout(function() {
-      obs.disconnect()
-      if (!document.getElementById("ocv-wrapper")) boot()
-    }, 5000)
+  function isOnCrimesTab() {
+    return window.location.hash.includes("/tab=crimes")
   }
 
+  function maybeBooted() {
+    if (!isOnCrimesTab()) return
+    if (findContainer()) {
+      boot()
+    } else {
+      const obs = new MutationObserver(function() {
+        if (findContainer()) { obs.disconnect(); boot() }
+      })
+      obs.observe(document.body || document.documentElement, { childList: true, subtree: true })
+      setTimeout(function() {
+        obs.disconnect()
+        if (!document.getElementById("ocv-wrapper")) boot()
+      }, 5000)
+    }
+  }
+
+  // Boot on initial load if already on crimes tab
+  maybeBooted()
+
+  // Re-check when hash changes (tab navigation within factions page)
+  window.addEventListener("hashchange", function() {
+    if (isOnCrimesTab()) {
+      if (!document.getElementById("ocv-wrapper")) maybeBooted()
+    } else {
+      // Left crimes tab — remove the panel
+      const w = document.getElementById("ocv-wrapper")
+      if (w) w.remove()
+    }
+  })
+
   setInterval(function() {
+    if (!isOnCrimesTab()) return
     if (!document.getElementById("ocv-wrapper") && !document.getElementById("ocv-id-overlay")) {
       if (findContainer()) { injectStyles(); injectPanel(); fetchAndRender() }
     }
@@ -796,17 +818,21 @@
         if (instrs.length) {
           const instrId = "ocv-instr-" + cardIdx
           const condLabels = {
-            below24: "Stall ⏱, if Below 24:00",
-            above48: "Stall ⏱, if Above 48:00",
-            above72: "Stall ⏱, if Above 72:00",
-            general: "Stall ⏱, Instructions"
+            normal:  "⚠ Stall Warning",
+            urgent:  "🔴 Stall Warning — Urgent",
+            // legacy support
+            below24: "⚠ Stall Warning",
+            above48: "⚠ Stall Warning",
+            above72: "⚠ Stall Warning",
+            general: "⚠ Stall Warning",
           }
-          const typeColor = { stall: "#c8c800", cpr: "#55bbdd", note: "#9999cc" }
           let rows = instrs.map(function(r) {
-            const color    = typeColor[r.type] || "#aaa"
-            const condHead = r.cond && condLabels[r.cond]
-              ? '<span style="color:' + color + ';font-weight:bold">' + condLabels[r.cond] + ':</span> '
-              : r.type === "cpr"  ? '<span style="color:' + color + ';font-weight:bold">Hard CPR Requirements:</span> '
+            const color = r.type === "stall" ? (r.cond === "urgent" ? "#ff4444" : "#c8c800")
+                        : r.type === "cpr"   ? "#55bbdd"
+                        : "#9999cc"
+            const condHead = r.type === "stall"
+              ? '<span style="color:' + color + ';font-weight:bold">' + (condLabels[r.cond] || "⚠ Stall Warning") + ':</span> '
+              : r.type === "cpr"  ? '<span style="color:#55bbdd;font-weight:bold">Hard CPR Requirements:</span> '
               : r.type === "note" ? '<span style="color:#888;font-weight:bold">Note:</span> '
               : ""
             return '<div style="padding:4px 0;border-bottom:1px solid #2a2a2a">'
