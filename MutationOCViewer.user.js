@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Monarch Mutation — OCViewer
 // @namespace    mutationOCViewerJocko
-// @version      1.0.9
+// @version      1.0.10
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
 // @match        https://www.torn.com/factions.php?step=your&type=1*
@@ -615,9 +615,20 @@
     }
 
     // Period income
-    if (briefing.period_income) {
-      html += '<div class="ocv-income-bar">OC Income This Period: <strong>'
-        + escHTML(briefing.period_income) + '</strong></div>'
+    if (briefing.period_income || briefing.period_start || briefing.period_end) {
+      html += '<div class="ocv-income-bar">'
+      if (briefing.period_start || briefing.period_end) {
+        html += '<div style="font-size:10px;color:#888;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">'
+          + 'Current Period: <span style="color:#aaa;font-weight:bold">'
+          + escHTML(briefing.period_start || "")
+          + (briefing.period_start && briefing.period_end ? " → " : "")
+          + escHTML(briefing.period_end || "")
+          + '</span></div>'
+      }
+      if (briefing.period_income) {
+        html += 'OC Income This Period: <strong>' + escHTML(briefing.period_income) + '</strong>'
+      }
+      html += '</div>'
     }
 
     // Section header + legend
