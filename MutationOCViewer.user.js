@@ -4,7 +4,7 @@
 // @version      1.0.11
 // @description  Live OC briefing. CPR matching, role recommendations, status icons, live countdowns.
 // @author       JockoWillink [55408]
-// @match        https://www.torn.com/factions.php?step=your&type=1*
+// @match        https://www.torn.com/factions.php?step=your*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
