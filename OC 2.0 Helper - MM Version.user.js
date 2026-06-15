@@ -2,7 +2,7 @@
 // @name        [TORN] OC 2.0 Helper
 // @namespace   Violentmonkey Scripts
 // @match       https://www.torn.com/factions.php*
-// @version     5.3.0
+// @version     5.4.0
 // @author      callmericky [3299880] / whatdoesthespacebardo / JockoWillink (Mutation Adaptation)
 // @description Gives an overview of OC 2.0, showing members not in crimes, members in each crime, and if there are issues with any crimes. Visible when flying.
 // @require     http://code.jquery.com/jquery-3.6.0.min.js
@@ -1011,26 +1011,39 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
       // Mapping for your guild soft requirements
       const softCPRRequirements = {
         "Blast from the Past": {
-          "Picklock 1": 70,
-          "Hacker": 70,
+          "Picklock 1": 75,
+          "Hacker": 75,
           "Engineer": 75,
           "Bomber": 75,
           "Muscle": 75,
-          "Picklock 2": 69
+          "Picklock 2": 50
         },
         "Clinical Precision": {
-          "Assassin": 70,
-          "Cat Burglar": 72,
-          "Cleaner": 72,
-          "Imitator": 74
+          "Assassin": 72,
+          "Cat Burglar": 73,
+          "Cleaner": 73,
+          "Imitator": 73
         },
         "Break the Bank": {
-          "Muscle 1": 66,
-          "Muscle 2": 66,
+          "Muscle 1": 68,
+          "Muscle 2": 68,
           "Muscle 3": 70,
-          "Robber": 66,
-          "Thief 1": 62,
+          "Robber": 68,
+          "Thief 1": 66,
           "Thief 2": 70
+        },
+        "Stacking the Deck": {
+          "Imitator": 72,
+          "Hacker": 72,
+          "Cat Burglar": 72,
+          "Driver": 66
+        },
+        "Ace in the Hole": {
+          "Driver": 60,
+          "Muscle 1": 67,
+          "Muscle 2": 67,
+          "Hacker": 68,
+          "Imitator": 69
         }
       };
 
@@ -1057,7 +1070,20 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
         "Assassin": "16.1%",
         "Cleaner": "21.7%",
         "Imitator": "43.3%"
-      }
+      },
+       "Stacking the Deck": {
+        "Cat Burglar": "23.4%", // no number
+        "Driver": "3.0%",
+        "Hacker": "25.4",
+        "Imitator": "48.2%"
+      },
+       "Ace in the Hole": {
+        "Hacker": "28.3%", // no number
+        "Driver": "7.6%",
+        "Muscle 1": "18.3",
+        "Imitator": "21.1%",
+        "Muscle 2": "24.7%"
+      } 
         };
 
       // Grab crime name and slot role
@@ -1067,7 +1093,8 @@ async function putCrimeInfoIntoTable(_crimeArray, _afterElm) {
       // Roles that need numbering even for 1
       const numberedRoles = {
           "Blast from the Past": ["Picklock"],
-          "Break the Bank": ["Muscle", "Thief"]
+          "Break the Bank": ["Muscle", "Thief"],
+          "Ace in the Hole": ["Muscle"]
       };
 
       if (numberedRoles[crimeName]?.includes(roleName)) {
