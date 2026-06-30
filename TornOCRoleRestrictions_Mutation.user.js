@@ -1,19 +1,15 @@
 // ==UserScript==
-// @name         Torn OC Role Restrictions (Mutation Specific)
+// @name         Torn OC Role Restrictions (mutation specific)
 // @namespace    https://xentac.github.io
-// @version      1.3
-// @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator").
-// @author       underko[3362751], xentac[3354782]
+// @version      1.4
+// @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator"). Well paired with https://greasyfork.org/en/scripts/526834-oc-success-chance-2-0.
+// @author       underko[3362751], xentac[3354782], JockoWillink[55408] (just for mm's cprs)
 // @match        https://www.torn.com/factions.php*
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
 // @license      MIT
-// @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
-// @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
-
-// Original Courtesy of Xentac/Underko -> https://update.greasyfork.org/scripts/541951/Torn%20OC%20Role%20Evaluator.user.js
-// Link --> https://greasyfork.org/en/scripts/548447-torn-oc-role-restrictions
-
+// @downloadURL https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
+// @updateURL https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/TornOCRoleRestrictions_Mutation.user.js
 // ==/UserScript==
 
 (function () {
@@ -21,138 +17,144 @@
 
   let ocRoleInfluence = {
     "Pet Project": [
-      { role: "Kidnapper", influence: 41.14, lower: 70 },
-      { role: "Muscle", influence: 26.83, lower: 70 },
-      { role: "Picklock", influence: 32.03, lower: 70 },
+      { role: "Kidnapper", lower: 70 },
+      { role: "Muscle", lower: 70 },
+      { role: "Picklock", lower: 70 },
     ],
     "Mob Mentality": [
-      { role: "Looter #1", influence: 34.83, lower: 70 },
-      { role: "Looter #2", influence: 25.97, lower: 70 },
-      { role: "Looter #3", influence: 19.87, lower: 60 },
-      { role: "Looter #4", influence: 19.33, lower: 67 },
+      { role: "Looter #1", lower: 70 },
+      { role: "Looter #2", lower: 70 },
+      { role: "Looter #3", lower: 60 },
+      { role: "Looter #4", lower: 67 },
     ],
     "Cash Me if You Can": [
-      { role: "Thief #1", influence: 46.67, lower: 70 },
-      { role: "Thief #2", influence: 21.87, lower: 65 },
-      { role: "Lookout", influence: 31.46, lower: 70 },
+      { role: "Thief #1", lower: 70 },
+      { role: "Thief #2", lower: 65 },
+      { role: "Lookout", lower: 70 },
     ],
     "Best of the Lot": [
-      { role: "Picklock", influence: 23.65, lower: 70 },
-      { role: "Car Thief", influence: 21.06, lower: 70 },
-      { role: "Muscle", influence: 36.43, lower: 75 },
-      { role: "Imitator", influence: 18.85, lower: 60 },
+      { role: "Picklock", lower: 70 },
+      { role: "Car Thief", lower: 70 },
+      { role: "Muscle", lower: 75 },
+      { role: "Imitator", lower: 60 },
     ],
     "Market Forces": [
-      { role: "Enforcer", influence: 27.56, lower: 70 },
-      { role: "Negotiator", influence: 25.59, lower: 70 },
-      { role: "Lookout", influence: 19.05, lower: 68 },
-      { role: "Arsonist", influence: 4.12, lower: 40 },
-      { role: "Muscle", influence: 23.68, lower: 70 },
+      { role: "Enforcer", lower: 70 },
+      { role: "Negotiator", lower: 70 },
+      { role: "Lookout", lower: 68 },
+      { role: "Arsonist", lower: 40 },
+      { role: "Muscle", lower: 70 },
     ],
     "Smoke and Wing Mirrors": [
-      { role: "Car Thief", influence: 48.2, lower: 74 },
-      { role: "Imitator", influence: 26.3, lower: 70 },
-      { role: "Hustler #1", influence: 7.7, lower: 60 },
-      { role: "Hustler #2", influence: 17.81, lower: 65 },
+      { role: "Car Thief", lower: 74 },
+      { role: "Imitator", lower: 70 },
+      { role: "Hustler #1", lower: 60 },
+      { role: "Hustler #2", lower: 65 },
     ],
     "Gaslight the Way": [
-      { role: "Imitator #1", influence: 7.54, lower: 70 },
-      { role: "Imitator #2", influence: 34.85, lower: 72 },
-      { role: "Imitator #3", influence: 40.25, lower: 72 },
-      { role: "Looter #1", influence: 7.54, lower: 60 },
-      { role: "Looter #2", influence: 0.0, lower: 40 },
-      { role: "Looter #3", influence: 9.83, lower: 65 },
+      { role: "Imitator #1", lower: 70 },
+      { role: "Imitator #2", lower: 72 },
+      { role: "Imitator #3", lower: 72 },
+      { role: "Looter #1", lower: 60 },
+      { role: "Looter #2", lower: 40 },
+      { role: "Looter #3", lower: 65 },
     ],
     "Stage Fright": [
-      { role: "Enforcer", influence: 16.89, lower: 71 },
-      { role: "Muscle #1", influence: 21.92, lower: 72 },
-      { role: "Muscle #2", influence: 2.09, lower: 50 },
-      { role: "Muscle #3", influence: 9.49, lower: 70 },
-      { role: "Lookout", influence: 7.68, lower: 60 },
-      { role: "Sniper", influence: 41.92, lower: 75 },
+      { role: "Enforcer", lower: 70 },
+      { role: "Muscle #1", lower: 72 },
+      { role: "Muscle #2", lower: 50 },
+      { role: "Muscle #3", lower: 70 },
+      { role: "Lookout", lower: 60 },
+      { role: "Sniper", lower: 75 },
     ],
     "Snow Blind": [
-      { role: "Hustler", influence: 51.4, lower: 74 },
-      { role: "Imitator", influence: 30.44, lower: 70 },
-      { role: "Muscle #1", influence: 9.08, lower: 70 },
-      { role: "Muscle #2", influence: 9.08, lower: 50 },
+      { role: "Hustler", lower: 74 },
+      { role: "Imitator", lower: 70 },
+      { role: "Muscle #1", lower: 70 },
+      { role: "Muscle #2", lower: 50 },
     ],
     "Leave No Trace": [
-      { role: "Techie", influence: 24.4, lower: 60 },
-      { role: "Negotiator", influence: 29.07, lower: 70 },
-      { role: "Imitator", influence: 46.54, lower: 73 },
+      { role: "Techie", lower: 60 },
+      { role: "Negotiator", lower: 70 },
+      { role: "Imitator", lower: 73 },
     ],
     "No Reserve": [
-      { role: "Car Thief", influence: 30.86, lower: 67 },
-      { role: "Techie", influence: 37.88, lower: 75 },
-      { role: "Engineer", influence: 31.27, lower: 67 },
+      { role: "Car Thief", lower: 67 },
+      { role: "Techie", lower: 75 },
+      { role: "Engineer", lower: 67 },
     ],
     "Counter Offer": [
-      { role: "Robber", influence: 33.29, lower: 62 },
-      { role: "Looter", influence: 4.69, lower: 42 },
-      { role: "Hacker", influence: 16.72, lower: 60 },
-      { role: "Picklock", influence: 17.1, lower: 60 },
-      { role: "Engineer", influence: 28.21, lower: 62 },
+      { role: "Robber", lower: 62 },
+      { role: "Looter", lower: 42 },
+      { role: "Hacker", lower: 60 },
+      { role: "Picklock", lower: 60 },
+      { role: "Engineer", lower: 62 },
     ],
     "Guardian Ángels": [
-      { role: "Enforcer", influence: 24.4, lower: 60 },
-      { role: "Hustler", influence: 29.07, lower: 73 },
-      { role: "Engineer", influence: 46.54, lower: 70 },
+      { role: "Enforcer", lower: 60 },
+      { role: "Hustler", lower: 73 },
+      { role: "Engineer", lower: 70 },
     ],
     "Honey Trap": [
-      { role: "Enforcer", influence: 20.21, lower: 60 },
-      { role: "Muscle #1", influence: 34.32, lower: 70 },
-      { role: "Muscle #2", influence: 45.47, lower: 75 },
+      { role: "Enforcer", lower: 60 },
+      { role: "Muscle #1", lower: 70 },
+      { role: "Muscle #2", lower: 75 },
     ],
     "Bidding War": [
-      { role: "Robber #1", influence: 6.82, lower: 60 },
-      { role: "Driver", influence: 21.93, lower: 70 },
-      { role: "Robber #2", influence: 19.63, lower: 75 },
-      { role: "Robber #3", influence: 25.65, lower: 70 },
-      { role: "Bomber #1", influence: 10.96, lower: 70 },
-      { role: "Bomber #2", influence: 15.0, lower: 63 },
+      { role: "Robber #1", lower: 60 },
+      { role: "Driver", lower: 70 },
+      { role: "Robber #2", lower: 75 },
+      { role: "Robber #3", lower: 70 },
+      { role: "Bomber #1", lower: 70 },
+      { role: "Bomber #2", lower: 63 },
     ],
     "Blast from the Past": [
-      { role: "Picklock #1", influence: 11, lower: 75 },
-      { role: "Hacker", influence: 12, lower: 75 },
-      { role: "Engineer", influence: 24, lower: 75 },
-      { role: "Bomber", influence: 16, lower: 75 },
-      { role: "Muscle", influence: 34, lower: 75 },
-      { role: "Picklock #2", influence: 3, lower: 50 },
+      { role: "Picklock #1", lower: 75 },
+      { role: "Hacker", lower: 75},
+      { role: "Engineer", lower: 75 },
+      { role: "Bomber", lower: 75 },
+      { role: "Muscle", lower: 75 },
+      { role: "Picklock #2", lower: 40 },
     ],
     "Break the Bank": [
-      { role: "Robber", influence: 13, lower: 68 },
-      { role: "Muscle #1", influence: 14, lower: 68 },
-      { role: "Muscle #2", influence: 10, lower: 68 },
-      { role: "Thief #1", influence: 3.55, lower: 66 },
-      { role: "Muscle #3", influence: 33.54, lower: 70 },
-      { role: "Thief #2", influence: 29, lower: 70 },
+      { role: "Robber", lower: 68 },
+      { role: "Muscle #1", lower: 68 },
+      { role: "Muscle #2", lower: 68 },
+      { role: "Thief #1", lower: 66 },
+      { role: "Muscle #3", lower: 70 },
+      { role: "Thief #2", lower: 70 },
     ],
     "Stacking the Deck": [
-      { role: "Cat Burglar", influence: 23, lower: 72 },
-      { role: "Driver", influence: 3, lower: 66 },
-      { role: "Hacker", influence: 26, lower: 72 },
-      { role: "Imitator", influence: 48, lower: 72 },
+      { role: "Cat Burglar", lower: 72 },
+      { role: "Driver", lower: 66 },
+      { role: "Hacker", lower: 72 },
+      { role: "Imitator", lower: 72 },
     ],
     "Clinical Precision": [
-      { role: "Imitator", influence: 43, lower: 73 },
-      { role: "Cat Burglar", influence: 19, lower: 73 },
-      { role: "Assassin", influence: 16, lower: 72 },
-      { role: "Cleaner", influence: 22, lower: 73 },
+      { role: "Imitator", lower: 73 },
+      { role: "Cat Burglar", lower: 73 },
+      { role: "Assassin", lower: 72 },
+      { role: "Cleaner", lower: 73 },
     ],
     "Ace in the Hole": [
-      { role: "Imitator", influence: 21, lower: 69 },
-      { role: "Muscle #1", influence: 18, lower: 67 },
-      { role: "Muscle #2", influence: 25, lower: 67 },
-      { role: "Hacker", influence: 28, lower: 68 },
-      { role: "Driver", influence: 8, lower: 60 },
+      { role: "Imitator", lower: 69 },
+      { role: "Muscle #1", lower: 67 },
+      { role: "Muscle #2", lower: 67 },
+      { role: "Hacker", lower: 68 },
+      { role: "Driver", lower: 60 },
     ],
-    "Manifest Cruelty": [
-      { role: "Reviver", influence: 46, lower: 99 },
-      { role: "Interrogator", influence: 24, lower: 99 },
-      { role: "Hacker", influence: 16, lower: 99 },
-      { role: "Cat Burglar", influence: 14, lower: 99 },
+    "Sneaky Git Grab": [
+      { role: "Imitator", lower: 60 },
+      { role: "Pickpocket", lower: 75 },
+      { role: "Hacker", lower: 66 },
+      { role: "Techie", lower: 70 },
     ],
+      "Manifest Cruelty": [
+      { role: "Reviver", lower: 99 },
+      { role: "Interrogator", lower: 99 },
+      { role: "Hacker", lower: 99 },
+      { role: "Cat Burglar", lower: 99 },
+    ],    
   };
 
   let crimeData = {};
@@ -164,15 +166,17 @@
     const lower = roleData ? roleData.lower : 70;
     let upper = lower + 10;
 
-    const roleLowers = ocInfo
-      .map((role) => {
-        return role.lower;
-      })
-      .sort();
+    if (ocInfo) {
+      const roleLowers = ocInfo
+        .map((role) => {
+          return role.lower;
+        })
+        .sort();
 
-    // If our role is a low influence role, set the upper bound to the next highest lower bound if upper doesn't already pass it
-    if (roleLowers[0] == lower && upper < roleLowers[1]) {
-      upper = roleLowers[1];
+      // If our role is a low influence role, set the upper bound to the next highest lower bound if upper doesn't already pass it
+      if (roleLowers[0] == lower && upper < roleLowers[1]) {
+        upper = roleLowers[1];
+      }
     }
 
     return { lower, upper };
@@ -181,9 +185,13 @@
   function getFactionId() {
     let factionId = "";
     try {
-      document
-        .querySelector(".forum-thread")
-        .href.split("#")[1]
+      const ft = document.querySelector(".forum-thread");
+      if (!ft.href) {
+        return null;
+      }
+
+      ft.href
+        .split("#")[1]
         .split("&")
         .forEach((elem) => {
           if (elem[0] == "a") {
@@ -239,13 +247,13 @@
     const ocId = wrapper.getAttribute("data-oc-id");
     if (!ocId || crimeData[ocId]) return;
 
-    const titleEl = wrapper.querySelector("p.panelTitle___aoGuV");
+    const titleEl = wrapper.querySelector('p[class*="panelTitle__"]');
     if (!titleEl) return;
 
     const crimeTitle = titleEl.textContent.trim();
     const roles = [];
 
-    const roleEls = wrapper.querySelectorAll(".title___UqFNy");
+    const roleEls = wrapper.querySelectorAll('[class*="title__"]');
     roleEls.forEach((roleEl) => {
       const roleName = roleEl.textContent.trim();
       const successEl = roleEl.nextElementSibling;
@@ -262,7 +270,7 @@
         successEl.textContent = `${chance}/${evaluation.lower}`;
       }
 
-      const slotHeader = roleEl.closest("button.slotHeader___K2BS_");
+      const slotHeader = roleEl.closest('button[class*="slotHeader__"]');
       if (slotHeader) {
         if (chance >= evaluation.upper) {
           //slotHeader.style.backgroundColor = "#ca6f1e";
@@ -280,7 +288,7 @@
   function setupMutationObserver(root) {
     const observer = new MutationObserver(() => {
       const tabTitle = document
-        .querySelector("button.active___ImR61 span.tabName___DdwH3")
+        .querySelector('button[class*="active__"] span[class*="tabName__"]')
         ?.textContent.trim();
 
       if (tabTitle !== "Recruiting" && tabTitle !== "Planning") return;
@@ -290,7 +298,7 @@
         previousTab = tabTitle;
       }
 
-      const allCrimes = document.querySelectorAll(".wrapper___U2Ap7");
+      const allCrimes = document.querySelectorAll('[class*="wrapper__"]');
       allCrimes.forEach((crimeNode) => {
         processCrime(crimeNode);
       });
@@ -315,16 +323,13 @@
   }
 
   // Inserting dependency because Torn PDA can't handle @require
-  // ==UserScript==
-  // @version 1.3.0
-  // @name waitForKeyElements.js (CoeJoder fork)
-  // @description A utility function for userscripts that detects and handles AJAXed content.
-  // @namespace https://github.com/CoeJoder/waitForKeyElements.js
-  // @author CoeJoder
-  // @homepage https://github.com/CoeJoder/waitForKeyElements.js
-  // @source https://raw.githubusercontent.com/CoeJoder/waitForKeyElements.js/master/waitForKeyElements.js
-  //
-  // ==/UserScript==
+  // -- @version 1.3.0
+  // -- @name waitForKeyElements.js (CoeJoder fork)
+  // -- @description A utility function for userscripts that detects and handles AJAXed content.
+  // -- @namespace https://github.com/CoeJoder/waitForKeyElements.js
+  // -- @author CoeJoder
+  // -- @homepage https://github.com/CoeJoder/waitForKeyElements.js
+  // -- @source https://raw.githubusercontent.com/CoeJoder/waitForKeyElements.js/master/waitForKeyElements.js
 
   /**
    * A utility function for userscripts that detects and handles AJAXed content.
@@ -404,9 +409,3 @@
     }
   }
 })();
-
-
-
-
-
-
