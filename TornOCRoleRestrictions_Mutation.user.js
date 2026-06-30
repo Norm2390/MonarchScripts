@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn OC Role Restrictions (Mutation Specific)
 // @namespace    https://xentac.github.io
-// @version      1.1
+// @version      1.3
 // @description  Highlight role restrictions and best roles in OC 2.0 (modified copy of "Torn OC Role Evaluator").
 // @author       underko[3362751], xentac[3354782]
 // @match        https://www.torn.com/factions.php*
@@ -113,39 +113,39 @@
       { role: "Bomber #2", influence: 15.0, lower: 63 },
     ],
     "Blast from the Past": [
-      { role: "Picklock #1", influence: 11, lower: 70 },
-      { role: "Hacker", influence: 12, lower: 70 },
+      { role: "Picklock #1", influence: 11, lower: 75 },
+      { role: "Hacker", influence: 12, lower: 75 },
       { role: "Engineer", influence: 24, lower: 75 },
       { role: "Bomber", influence: 16, lower: 75 },
       { role: "Muscle", influence: 34, lower: 75 },
-      { role: "Picklock #2", influence: 3, lower: 15 },
+      { role: "Picklock #2", influence: 3, lower: 50 },
     ],
     "Break the Bank": [
-      { role: "Robber", influence: 13, lower: 66 },
-      { role: "Muscle #1", influence: 14, lower: 66 },
-      { role: "Muscle #2", influence: 10, lower: 66 },
-      { role: "Thief #1", influence: 3.55, lower: 62 },
+      { role: "Robber", influence: 13, lower: 68 },
+      { role: "Muscle #1", influence: 14, lower: 68 },
+      { role: "Muscle #2", influence: 10, lower: 68 },
+      { role: "Thief #1", influence: 3.55, lower: 66 },
       { role: "Muscle #3", influence: 33.54, lower: 70 },
       { role: "Thief #2", influence: 29, lower: 70 },
     ],
     "Stacking the Deck": [
-      { role: "Cat Burglar", influence: 23, lower: 71 },
-      { role: "Driver", influence: 3, lower: 68 },
-      { role: "Hacker", influence: 26, lower: 71 },
-      { role: "Imitator", influence: 48, lower: 71 },
+      { role: "Cat Burglar", influence: 23, lower: 72 },
+      { role: "Driver", influence: 3, lower: 66 },
+      { role: "Hacker", influence: 26, lower: 72 },
+      { role: "Imitator", influence: 48, lower: 72 },
     ],
     "Clinical Precision": [
-      { role: "Imitator", influence: 43, lower: 74 },
-      { role: "Cat Burglar", influence: 19, lower: 72 },
-      { role: "Assassin", influence: 16, lower: 70 },
-      { role: "Cleaner", influence: 22, lower: 72 },
+      { role: "Imitator", influence: 43, lower: 73 },
+      { role: "Cat Burglar", influence: 19, lower: 73 },
+      { role: "Assassin", influence: 16, lower: 72 },
+      { role: "Cleaner", influence: 22, lower: 73 },
     ],
     "Ace in the Hole": [
       { role: "Imitator", influence: 21, lower: 69 },
-      { role: "Muscle #1", influence: 18, lower: 68 },
-      { role: "Muscle #2", influence: 25, lower: 68 },
+      { role: "Muscle #1", influence: 18, lower: 67 },
+      { role: "Muscle #2", influence: 25, lower: 67 },
       { role: "Hacker", influence: 28, lower: 68 },
-      { role: "Driver", influence: 8, lower: 63 },
+      { role: "Driver", influence: 8, lower: 60 },
     ],
     "Manifest Cruelty": [
       { role: "Reviver", influence: 46, lower: 99 },
