@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    MM OC Prioritizer - Jocko
-// @version      1.0.1
+// @version      1.0.2
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
-// @grant        none
-// @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MM_OCPrioritizer.user.js
-// @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MM_OCPrioritizer.user.js
+// @grant        GM.xmlHttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_info
 // @author       Jocko [55408]
 // ==/UserScript==
 
@@ -1013,7 +1014,7 @@
   }
 
   /* ============================================================================
-   * Grabbing CPR values for each members role
+   * DOM scraping
    * ============================================================================ */
   function findOcCards() {
     return Array.from(document.querySelectorAll("[data-oc-id]"));
@@ -1418,7 +1419,7 @@
       text = "\u{1F534} STALLED \u2014 needs someone to pick up planning";
       variant = "stalled";
     } else if (info.crowded) {
-      text = `\u{1F6A6} Busy \u2014 ${info.idleCount} member${info.idleCount === 1 ? "" : "s"} waiting to start planning. Msg the last 1-2 ppl (furthest right) to move or start up new oc if you see em online \u{1F6A6}`;
+      text = `\u{1F6A6} Busy \u2014 ${info.idleCount} member${info.idleCount === 1 ? "" : "s"} waiting to start planning. Ideally max +1/2 waiting to plan (Exception, Hostile Takeover) \u{1F6A6}`;
       variant = "crowded";
     }
 
@@ -1768,6 +1769,8 @@
     };
   }
 
+  let visibilityListenerAdded = false;
+
   function setupObserver(root) {
     const debouncedPass = debounce(runPass, SCAN_DEBOUNCE_MS);
 
@@ -1780,9 +1783,16 @@
 
     debouncedPass();
 
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) debouncedPass();
-    });
+    // Prevent attaching a new visibility change listener every time the tab remounts
+    if (!visibilityListenerAdded) {
+      document.addEventListener("visibilitychange", () => {
+        // Only run if the document is visible AND we're actively on the crimes tab
+        if (!document.hidden && window.location.hash.includes("tab=crimes")) {
+          debouncedPass();
+        }
+      });
+      visibilityListenerAdded = true;
+    }
   }
 
   function waitForRoot(selector, cb, timeoutMs = 15000) {
@@ -1801,11 +1811,38 @@
   }
 
   /* ============================================================================
-   * Init
+   * Init & SPA Routing
    * ============================================================================ */
   injectStyles();
   ensureGearUi();
-  waitForRoot("#faction-crimes-root", (root) => {
-    setupObserver(root);
-  });
+
+  let isCrimesTabObserverActive = false;
+
+  function initCrimesTab() {
+    if (isCrimesTabObserverActive) return;
+
+    waitForRoot("#faction-crimes-root", (root) => {
+      // Abort if the user navigated away while we were waiting for the DOM to load
+      if (!window.location.hash.includes("tab=crimes")) return;
+
+      setupObserver(root);
+      isCrimesTabObserverActive = true;
+    });
+  }
+
+  function handleRoute() {
+    if (window.location.hash.includes("tab=crimes")) {
+      initCrimesTab();
+    } else {
+      // Reset state when leaving the tab so it can re-initialize upon return.
+      // The old MutationObserver dies automatically with the removed #faction-crimes-root element.
+      isCrimesTabObserverActive = false;
+    }
+  }
+
+  // Listen for Torn's single-page application hash navigation
+  window.addEventListener("hashchange", handleRoute);
+
+  // Initial check on load
+  handleRoute();
 })();
