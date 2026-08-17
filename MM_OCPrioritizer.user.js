@@ -1014,7 +1014,7 @@
   }
 
   /* ============================================================================
-   * DOM scraping
+   * Grabbing CPR values for each members role
    * ============================================================================ */
   function findOcCards() {
     return Array.from(document.querySelectorAll("[data-oc-id]"));
