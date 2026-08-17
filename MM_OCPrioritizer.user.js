@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
-// @namespace    MM OC Prioritizer - Jocko
-// @version      1.0.4
+// @namespace    jocko.mmocprioritizer
+// @version      1.0.5
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
@@ -13,7 +13,7 @@
 
 /*
  * ============================================================================
- * PROPRIETARY — Mutation faction internal tool. Not open source, not for
+ * Mutation faction internal tool. Not open source, not for
  * public/collaborative use or redistribution.
  *
  * This script is built specifically for Mutation members to help organize
@@ -1013,7 +1013,7 @@
   }
 
   /* ============================================================================
-   * DOM scraping
+   * Grabbing member CPRs for OC priority 
    * ============================================================================ */
   function findOcCards() {
     return Array.from(document.querySelectorAll("[data-oc-id]"));
