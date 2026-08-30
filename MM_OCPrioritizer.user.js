@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.0.8
+// @version      1.1.0
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
@@ -13,7 +13,7 @@
 
 /*
  * ============================================================================
- * Mutation faction internal tool. Not open source, not for
+ * PROPRIETARY — Mutation faction internal tool. Not open source, not for
  * public/collaborative use or redistribution.
  *
  * This script is built specifically for Mutation members to help organize
@@ -21,16 +21,13 @@
  * repackage, or redistribute this script (in whole or in part) outside the
  * faction without messaging Jocko [55408] first.
  * ============================================================================
- *
- * NOTE: MEMBERS WILL NOT HAVE TO ADJUST ANYTHING BELOW: IF YOU DO, YOU WILL NO LONGER BE ALIGNED WITH THE REST OF THE MEMBERS WHO USE IT!
- *
  */
 
 (function () {
   "use strict";
 
   /* ============================================================================
-   * CONFIG FOR current/future Mutation OC MANAGERS  — edit this section to add/adjust crimes, CPR requirements, and
+   * CONFIG — edit this section to add/adjust crimes, CPR requirements, and
    * role weights.
    *
    * CPR_REQUIREMENTS: key = exact OC scenario name shown in the panel title.
@@ -92,6 +89,9 @@
     "Hostile Takeover": {
       "Muscle": 68, "Negotiator": 68, "Cat Burglar": 68, "Kidnapper": 68, "Hacker": 68, "Engineer": 68,
     },
+      "Cleared for Takeoff": {
+      "Interrogator": 75, "Assassin": 75, "Imitator": 75, "Lookout": 75, "Pickpocket": 75, "Techie": 75,
+    },
   };
 
   // Role importance / weight-to-success-chance, shown under every role
@@ -109,6 +109,8 @@
       "Robber": 12.7, "Thief #1": 2.9, "Thief #2": 29.1,
     },
     "Lock Stock": { "Assassin": 38.6, "Muscle #2": 10.6, "Hacker": 15.3, "Muscle #1": 10.6, "Smuggler": 24.9 },
+    "Stacking the Deck": { "Cat Burglar": 23.4, "Driver": 3.0, "Hacker": 25.4, "Imitator": 48.2 },
+    "Ace in the Hole": { "Driver": 7.6, "Hacker": 28.3, "Imitator": 21.1, "Muscle #1": 18.3, "Muscle #2": 24.7 },
   };
 
   // How many points below the listed requirement we'll still call a "pass".
@@ -122,7 +124,7 @@
   // has this many people parked at 0% and still has open slots, we treat it
   // as "busy" and rank it below equally-difficult, less-crowded options —
   // never hidden, just deprioritized.
-  const CROWDING_IDLE_THRESHOLD = 3; // 0,1,2 idle = fine (24-48h wait); 3+ = busy
+  const CROWDING_IDLE_THRESHOLD = 2; // 0,1,2 idle = fine (24-48h wait); 3+ = busy
 
   // How close to stalling (hours) counts as "urgent" for sort/wording
   // purposes. Shared by the stall-row verdict text and the sort buckets
@@ -136,7 +138,7 @@
   // after everything named, difficulty being equal).
   const CRIME_IMPORTANCE_ORDER = [
     "Hostile Takeover", "Ace in the Hole",
-    "Break the Bank", "Lock Stock", "Stacking the Deck", "Clinical Precision",
+    "Break the Bank", "Lock Stock", "Stacking the Deck", "Clinical Precision", "Cleared for Takeoff",
     "Blast from the Past", "Window of Opportunity",
   ];
   function crimeImportanceIndex(crimeName) {
@@ -156,6 +158,7 @@
   const HIDDEN_CRIMES_BY_DEFAULT = ["Manifest Cruelty"];
 
   const STORAGE_KEY = "tornOC_prioritizer_cprData_v1";
+  const CRIME_DIFFICULTY_CACHE_KEY = "tornOC_prioritizer_crimeDifficultyCache_v1";
   const MAX_DIFFICULTY_KEY = "tornOC_prioritizer_maxDifficulty_v1";
   const SORT_TOGGLE_KEY = "tornOC_prioritizer_dynamicSortEnabled_v1";
   const SHOW_HIDDEN_KEY = "tornOC_prioritizer_showHiddenOcs_v1";
@@ -201,17 +204,83 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   }
 
+  // Remembers each crime's difficulty level (1–10) the last time it was
+  // actually seen live on screen — persists across sessions, since a crime
+  // that isn't currently spawned can't have its level read from the DOM.
+  // Used purely to sort the settings panels; doesn't affect qualification or
+  // priority sort logic elsewhere.
+  function loadCrimeDifficultyCache() {
+    try {
+      return JSON.parse(localStorage.getItem(CRIME_DIFFICULTY_CACHE_KEY) || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+  let crimeDifficultyCache = loadCrimeDifficultyCache();
+  function rememberCrimeDifficulty(crimeName, difficulty) {
+    if (difficulty === null || difficulty === undefined) return;
+    if (crimeDifficultyCache[crimeName] === difficulty) return;
+    crimeDifficultyCache[crimeName] = difficulty;
+    localStorage.setItem(CRIME_DIFFICULTY_CACHE_KEY, JSON.stringify(crimeDifficultyCache));
+  }
+
+  // Sorts crime names hardest-first using the cached difficulty (falls back
+  // to CRIME_IMPORTANCE_ORDER's position, then alphabetical, for anything
+  // we've genuinely never seen live yet).
+  function sortCrimeNamesByDifficulty(names) {
+    return [...names].sort((a, b) => {
+      const da = crimeDifficultyCache[a];
+      const db = crimeDifficultyCache[b];
+      if (da !== undefined && db !== undefined && da !== db) return db - da;
+      if (da !== undefined && db === undefined) return -1;
+      if (da === undefined && db !== undefined) return 1;
+      const cia = crimeImportanceIndex(a);
+      const cib = crimeImportanceIndex(b);
+      if (cia !== cib) return cia - cib;
+      return a.localeCompare(b);
+    });
+  }
+
+  // Sorts a crime's role names by impact weight descending (falls back to
+  // alphabetical for roles with no weight on file).
+  function sortRoleNamesByWeight(crimeName, roleNames) {
+    const weightMap = ROLE_WEIGHTS[crimeName];
+    return [...roleNames].sort((a, b) => {
+      const wa = weightMap ? normalizeLookup(weightMap, a) : undefined;
+      const wb = weightMap ? normalizeLookup(weightMap, b) : undefined;
+      if (wa !== undefined && wb !== undefined && wa !== wb) return wb - wa;
+      if (wa !== undefined && wb === undefined) return -1;
+      if (wa === undefined && wb !== undefined) return 1;
+      return a.localeCompare(b);
+    });
+  }
+
+  // Records a new personal-best CPR and appends it to that role's growth
+  // history (only on genuine increases, not every page view — keeps the log
+  // compact since it's just recording real growth events, not noise).
   function recordCpr(store, crimeName, roleName, value) {
     if (!store[crimeName]) store[crimeName] = {};
     const existing = store[crimeName][roleName];
     if (!existing || value > existing.value) {
-      store[crimeName][roleName] = { value, updatedAt: new Date().toISOString() };
+      const now = new Date().toISOString();
+      const history = existing && existing.history ? existing.history.slice() : [];
+      history.push({ value, at: now });
+      store[crimeName][roleName] = { value, updatedAt: now, history };
       return { changed: true, previous: existing ? existing.value : null };
     }
     return { changed: false, previous: existing.value };
   }
 
   const LEVEL9_CRIMES = ["Hostile Takeover", "Ace in the Hole"];
+
+  // Growth History tab range filters.
+  const GROWTH_RANGE_OPTIONS = [
+    { label: "Lifetime", days: null },
+    { label: "Last 3 Months", days: 90 },
+    { label: "Last 2 Months", days: 60 },
+    { label: "Last 1 Month", days: 30 },
+    { label: "Last 2 Weeks", days: 14 },
+  ];
 
   // Checks the member's STORED CPR history (not just what's currently open
   // on screen — Level 9 crimes might not even be spawned right now) against
@@ -457,21 +526,49 @@
           Show hidden OCs (e.g. Manifest Cruelty)
         </label>
       </div>
-      <div class="tt2p-settings-header" style="margin-top:14px;">Stored CPR Data</div>
-      <div id="tt2p-settings-body"></div>
+      <div class="tt2p-settings-header" style="margin-top:14px;">CPR Data</div>
+      <div class="tt2p-tabs">
+        <button type="button" class="tt2p-tab-btn tt2p-tab-active" data-tab="snapshot">Snapshot</button>
+        <button type="button" class="tt2p-tab-btn" data-tab="growth">Growth History</button>
+      </div>
+      <div id="tt2p-settings-body" class="tt2p-tab-panel tt2p-tab-panel-active"></div>
+      <div id="tt2p-growth-body" class="tt2p-tab-panel">
+        <div class="tt2p-growth-controls">
+          <label for="tt2p-growth-range">Range:</label>
+          <select id="tt2p-growth-range">
+            ${GROWTH_RANGE_OPTIONS.map((o) => `<option value="${o.days ?? "lifetime"}">${o.label}</option>`).join("")}
+          </select>
+        </div>
+        <div id="tt2p-growth-list"></div>
+      </div>
       <button id="tt2p-purge-btn" type="button">Purge All CPR Data</button>
     `;
     document.body.appendChild(panel);
 
+    panel.querySelectorAll(".tt2p-tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        panel.querySelectorAll(".tt2p-tab-btn").forEach((b) => b.classList.remove("tt2p-tab-active"));
+        btn.classList.add("tt2p-tab-active");
+        const target = btn.dataset.tab;
+        panel.querySelector("#tt2p-settings-body").classList.toggle("tt2p-tab-panel-active", target === "snapshot");
+        panel.querySelector("#tt2p-growth-body").classList.toggle("tt2p-tab-panel-active", target === "growth");
+        if (target === "growth") renderGrowthPanel();
+      });
+    });
+
+    panel.querySelector("#tt2p-growth-range").addEventListener("change", renderGrowthPanel);
+
     gear.addEventListener("click", () => {
       panel.classList.toggle("tt2p-open");
       if (panel.classList.contains("tt2p-open")) {
-        // Position the panel just above the gear button using its actual
-        // measured height — the button's height now varies with the label
-        // text, so a hardcoded offset would drift.
+        // Gear button now sits near the top of the page, so open the panel
+        // DOWNWARD from its bottom edge (measured live, same reasoning as
+        // before — its height varies with the label text).
         const gearRect = gear.getBoundingClientRect();
-        panel.style.bottom = `${Math.round(window.innerHeight - gearRect.top + 10)}px`;
+        panel.style.top = `${Math.round(gearRect.bottom + 10)}px`;
+        panel.style.bottom = "auto";
         renderSettingsPanel();
+        renderGrowthPanel();
       }
     });
 
@@ -498,6 +595,7 @@
       if (confirm("Erase all locally stored CPR data for this browser? This can't be undone.")) {
         localStorage.removeItem(STORAGE_KEY);
         renderSettingsPanel();
+        renderGrowthPanel();
         showToast("CPR data purged.");
       }
     });
@@ -507,7 +605,7 @@
     const body = document.getElementById("tt2p-settings-body");
     if (!body) return;
     const store = loadStore();
-    const crimeNames = Object.keys(store).sort();
+    const crimeNames = sortCrimeNamesByDifficulty(Object.keys(store));
 
     if (crimeNames.length === 0) {
       body.innerHTML = `<div class="tt2p-settings-empty">No CPR data stored yet. Browse Recruiting/Planning with open roles showing to capture some.</div>`;
@@ -526,7 +624,7 @@
 
     crimeNames.forEach((crimeName) => {
       const roles = store[crimeName];
-      const roleNames = Object.keys(roles).sort();
+      const roleNames = sortRoleNamesByWeight(crimeName, Object.keys(roles));
       const reqMap = CPR_REQUIREMENTS[crimeName];
       html += `<div class="tt2p-settings-crime">${escapeHtml(crimeName)}</div>`;
       roleNames.forEach((roleName) => {
@@ -557,6 +655,85 @@
       });
     });
     body.innerHTML = html;
+  }
+
+  // Growth History tab: for each role, shows the value at the start of the
+  // selected window vs the current value. "Start of window" = the last
+  // recorded value BEFORE the cutoff (so growth reflects what actually
+  // changed during the window, not just re-stating the current number), or
+  // the earliest-ever recorded value if there's no history before the
+  // cutoff. Older entries (pre-history-tracking) fall back to a single
+  // {value, at: updatedAt} point so nothing errors on old data.
+  function renderGrowthPanel() {
+    const listEl = document.getElementById("tt2p-growth-list");
+    const rangeSel = document.getElementById("tt2p-growth-range");
+    if (!listEl || !rangeSel) return;
+
+    const days = rangeSel.value === "lifetime" ? null : parseInt(rangeSel.value, 10);
+    const cutoff = days ? Date.now() - days * 24 * 60 * 60 * 1000 : null;
+
+    const store = loadStore();
+    const crimeNames = sortCrimeNamesByDifficulty(Object.keys(store));
+    let rows = "";
+    let anyData = false;
+
+    crimeNames.forEach((crimeName) => {
+      const roles = store[crimeName];
+      const roleNames = sortRoleNamesByWeight(crimeName, Object.keys(roles));
+      let crimeRows = "";
+
+      roleNames.forEach((roleName) => {
+        const entry = roles[roleName];
+        const history = entry.history && entry.history.length ? entry.history : [{ value: entry.value, at: entry.updatedAt }];
+        const inRange = cutoff ? history.filter((h) => new Date(h.at).getTime() >= cutoff) : history;
+        if (inRange.length === 0) return;
+
+        let startValue;
+        if (cutoff) {
+          const before = history.filter((h) => new Date(h.at).getTime() < cutoff);
+          startValue = before.length ? before[before.length - 1].value : inRange[0].value;
+        } else {
+          startValue = history[0].value;
+        }
+        const endValue = entry.value;
+        const growth = endValue - startValue;
+        anyData = true;
+
+        const growthHtml = growth > 0
+          ? `<span class="tt2p-diff-met">+${growth}</span>`
+          : growth < 0
+            ? `<span class="tt2p-diff-short">${growth}</span>`
+            : `<span class="tt2p-diff-neutral">+0</span>`;
+
+        crimeRows += `<div class="tt2p-settings-role tt2p-growth-row">
+          <span>${escapeHtml(roleName)}</span>
+          <span class="tt2p-col-num">${startValue}</span>
+          <span class="tt2p-col-num tt2p-growth-arrow">\u2192</span>
+          <span class="tt2p-col-num">${endValue}</span>
+          <span class="tt2p-col-num">${growthHtml}</span>
+        </div>`;
+      });
+
+      if (crimeRows) {
+        rows += `<div class="tt2p-settings-crime">${escapeHtml(crimeName)}</div>${crimeRows}`;
+      }
+    });
+
+    if (!anyData) {
+      listEl.innerHTML = `<div class="tt2p-settings-empty">No CPR observations in this range yet.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = `
+      <div class="tt2p-settings-role tt2p-settings-headerrow tt2p-growth-row">
+        <span>Role</span>
+        <span class="tt2p-col-num">Start</span>
+        <span class="tt2p-col-num"></span>
+        <span class="tt2p-col-num">Now</span>
+        <span class="tt2p-col-num">Growth</span>
+      </div>
+      ${rows}
+    `;
   }
 
   /* ============================================================================
@@ -826,7 +1003,7 @@
       #tt2p-gear-btn {
         position: fixed;
         right: 14px;
-        bottom: 80px;
+        top: 60px;
         z-index: 999999;
         width: 26px;
         padding: 8px 0;
@@ -855,9 +1032,9 @@
       #tt2p-settings-panel {
         position: fixed;
         right: 14px;
-        bottom: 124px;
+        top: 60px;
         width: 420px;
-        max-height: 460px;
+        max-height: min(460px, 70vh);
         overflow-y: auto;
         background: #1c1c1c;
         border: 1px solid rgba(255,255,255,0.25);
@@ -895,6 +1072,50 @@
       .tt2p-diff-met { color: #7fe89b; font-weight: bold; }
       .tt2p-diff-short { color: #ff9a7a; font-weight: bold; }
       .tt2p-diff-neutral { opacity: 0.4; }
+
+      .tt2p-tabs {
+        display: flex;
+        gap: 4px;
+        margin: 6px 0 8px;
+      }
+      .tt2p-tab-btn {
+        flex: 1;
+        padding: 5px 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.15);
+        color: #cfcfcf;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+        font-family: Arial, sans-serif;
+      }
+      .tt2p-tab-btn:hover { background: rgba(255,255,255,0.08); }
+      .tt2p-tab-btn.tt2p-tab-active {
+        background: rgba(62, 207, 92, 0.15);
+        border-color: rgba(62, 207, 92, 0.5);
+        color: #7fe89b;
+        font-weight: bold;
+      }
+      .tt2p-tab-panel { display: none; }
+      .tt2p-tab-panel.tt2p-tab-panel-active { display: block; }
+
+      .tt2p-growth-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        margin-bottom: 8px;
+      }
+      .tt2p-growth-controls select {
+        background: #101010;
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #eaeaea;
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 11px;
+      }
+      .tt2p-growth-row { grid-template-columns: 1fr 44px 20px 44px 56px; }
+      .tt2p-growth-arrow { opacity: 0.5; }
       .tt2p-settings-date { opacity: 0.6; font-size: 10px; white-space: nowrap; text-align: right; }
       .tt2p-col-date { opacity: 0.6; font-size: 10px; white-space: nowrap; text-align: right; }
       #tt2p-purge-btn {
@@ -1014,7 +1235,7 @@
   }
 
   /* ============================================================================
-   * Grabbing member CPRs for OC priority 
+   * CPR logging
    * ============================================================================ */
   function findOcCards() {
     return Array.from(document.querySelectorAll("[data-oc-id]"));
@@ -1118,6 +1339,18 @@
     return cumulative;
   }
 
+  // Torn only shows "Leave Role" on the ONE slot the viewer personally
+  // occupies — every other occupied slot shows "Remove from Role" instead
+  // (even to faction leadership). That's a reliable way to detect "am I in
+  // this OC" without needing to know the viewer's own username/ID at all.
+  function isViewerInCard(cardEl) {
+    const items = cardEl.querySelectorAll('[class*="slotMenuItem__"]');
+    for (const el of items) {
+      if (el.textContent.trim() === "Leave Role") return true;
+    }
+    return false;
+  }
+
   function readCard(cardEl) {
     const titleEl = cardEl.querySelector('p[class*="panelTitle__"]');
     const crimeName = titleEl ? titleEl.textContent.trim() : null;
@@ -1177,7 +1410,10 @@
 
     const totalSlots = slots.length;
     const openCount = totalSlots - occupiedCount;
-    const crowded = idleCount >= CROWDING_IDLE_THRESHOLD && openCount > 0;
+    // Level 9 crimes get a pass on the "busy" nudge — we don't have enough
+    // members who can do Hostile Takeover / Ace in the Hole, so queueing up
+    // on those is expected and accepted, not a sign of poor spreading-out.
+    const crowded = idleCount >= CROWDING_IDLE_THRESHOLD && openCount > 0 && difficulty !== 9;
     const nextJoinerWaitHours = computeTimeline(slots);
 
     // Star ranking: among OPEN roles this member actually qualifies for
@@ -1196,6 +1432,7 @@
       crimeName, tracked, difficulty, stalled, slots, blockedCount,
       occupiedCount, idleCount, totalSlots, crowded, nextJoinerWaitHours,
       overallCountdownHours: readOverallCountdownHours(cardEl),
+      viewerJoined: isViewerInCard(cardEl),
     };
   }
 
@@ -1324,7 +1561,8 @@
 
     const crimeId = cardEl.getAttribute("data-oc-id") || "";
     const lvlText = info.difficulty !== null ? `Lv. ${info.difficulty}` : "";
-    const idLvlName = `${crimeId ? `#${escapeHtml(crimeId)}  |  ` : ""}${lvlText ? `${lvlText}  ` : ""}${escapeHtml(info.crimeName)}`;
+    const pinPrefix = info.viewerJoined ? "\u{1F4CC} " : "";
+    const idLvlName = `${pinPrefix}${crimeId ? `#${escapeHtml(crimeId)}  |  ` : ""}${lvlText ? `${lvlText}  ` : ""}${escapeHtml(info.crimeName)}`;
 
     let detailsStr = "";
     if (activePlanner) {
@@ -1419,7 +1657,7 @@
       text = "\u{1F534} STALLED \u2014 needs someone to pick up planning";
       variant = "stalled";
     } else if (info.crowded) {
-      text = `\u{1F6A6} Busy \u2014 ${info.idleCount} member${info.idleCount === 1 ? "" : "s"} waiting to start planning. Ideally max +1/2 waiting to plan (Exception, Hostile Takeover) \u{1F6A6}`;
+      text = `\u{1F6A6} Busy \u2014 ${info.idleCount} member${info.idleCount === 1 ? "" : "s"} waiting to start planning. Msg the last 1-2 ppl to join (furthest right) to move or start up new oc if you see em online \u{1F6A6}`;
       variant = "crowded";
     }
 
@@ -1487,6 +1725,7 @@
       const info = readCard(cardEl);
       if (!info) return;
       cardInfos.push({ cardEl, info });
+      rememberCrimeDifficulty(info.crimeName, info.difficulty);
 
       let cardQualifies = false;
 
@@ -1541,7 +1780,10 @@
       saveStore(store);
       toastMessages.forEach(showToast);
       const panel = document.getElementById("tt2p-settings-panel");
-      if (panel && panel.classList.contains("tt2p-open")) renderSettingsPanel();
+      if (panel && panel.classList.contains("tt2p-open")) {
+        renderSettingsPanel();
+        renderGrowthPanel();
+      }
     }
 
     if (!dynamicSortEnabled) {
@@ -1663,19 +1905,40 @@
     // barely register.
     visibleNotQualified.sort((a, b) => (readDifficulty(b) ?? -1) - (readDifficulty(a) ?? -1));
 
+    // Pin anything the viewer has personally joined to the very top of the
+    // whole list, above every other bucket — detected via Torn's own "Leave
+    // Role" label, which only appears on the viewer's own slot. Pulled out
+    // of BOTH the qualified and not-qualified arrays (a joined OC is
+    // relevant regardless of whether it'd otherwise "qualify"), keeping
+    // their existing relative order from the sorts above.
+    const pinnedCards = [];
+    const remainingQualified = [];
+    visibleQualified.forEach((el) => {
+      if (cardInfoByEl.get(el)?.viewerJoined) pinnedCards.push(el);
+      else remainingQualified.push(el);
+    });
+    const remainingNotQualified = [];
+    visibleNotQualified.forEach((el) => {
+      if (cardInfoByEl.get(el)?.viewerJoined) pinnedCards.push(el);
+      else remainingNotQualified.push(el);
+    });
+
     // Special-case the #1 recommendation: if it's a completely fresh OC
     // (nobody's joined at all), swap its stall-row message for one that
-    // explains why it's on top and points at the star ratings.
-    const topCardInfo = visibleQualified.length ? cardInfoByEl.get(visibleQualified[0]) : null;
+    // explains why it's on top and points at the star ratings. Scoped to
+    // the top of the REMAINING (non-pinned) list, since a pinned OC always
+    // has at least the viewer in it and this message is specifically about
+    // OCs you haven't joined yet.
+    const topCardInfo = remainingQualified.length ? cardInfoByEl.get(remainingQualified[0]) : null;
     if (topCardInfo && topCardInfo.occupiedCount === 0) {
-      const topStallRow = visibleQualified[0].querySelector(".tt2p-tl-stall-row");
+      const topStallRow = remainingQualified[0].querySelector(".tt2p-tl-stall-row");
       if (topStallRow) {
         topStallRow.className = "tt2p-tl-stall-row tt2p-tl-stall-top-pick";
         topStallRow.innerHTML = `\u2B50 This OC is your top recommendation \u2014 nobody's started it yet. Please pick your highest-impact role (see the star ratings below).`;
       }
     }
 
-    reorderCards(visibleQualified, visibleNotQualified);
+    reorderCards([...pinnedCards, ...remainingQualified], remainingNotQualified);
   }
 
   function restoreOriginalOrder(container, currentCards) {
@@ -1769,10 +2032,18 @@
     };
   }
 
-  let visibilityListenerAdded = false;
+  // Fires on every visibility change; harmless no-op while hidden since
+  // runPass() itself checks document.hidden. Registered once globally rather
+  // than once per setupObserver() call, since the crimes tab can be
+  // entered/left/re-entered many times in a session.
+  let latestDebouncedPass = null;
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && latestDebouncedPass) latestDebouncedPass();
+  });
 
   function setupObserver(root) {
     const debouncedPass = debounce(runPass, SCAN_DEBOUNCE_MS);
+    latestDebouncedPass = debouncedPass;
 
     const observer = new MutationObserver(() => {
       if (isMutatingSelf) return;
@@ -1783,16 +2054,7 @@
 
     debouncedPass();
 
-    // Prevent attaching a new visibility change listener every time the tab remounts
-    if (!visibilityListenerAdded) {
-      document.addEventListener("visibilitychange", () => {
-        // Only run if the document is visible AND we're actively on the crimes tab
-        if (!document.hidden && window.location.hash.includes("tab=crimes")) {
-          debouncedPass();
-        }
-      });
-      visibilityListenerAdded = true;
-    }
+    return observer;
   }
 
   function waitForRoot(selector, cb, timeoutMs = 15000) {
@@ -1811,21 +2073,38 @@
   }
 
   /* ============================================================================
-   * Init & SPA Routing
+   * Init
+   *
+   * Torn's faction page is a single-page app: switching between Crimes,
+   * Armoury, the faction overview, etc. updates the URL hash rather than
+   * doing a full page load/navigation. A plain "wait for #faction-crimes-root
+   * once at script start" init only works for members who land directly on
+   * the Crimes tab — anyone who starts elsewhere in factions.php and clicks
+   * over to Crimes afterward would never get the script running, since
+   * #faction-crimes-root doesn't exist in the DOM until that tab is actually
+   * opened. Watching hashchange (plus a check on load, for anyone who does
+   * land directly on the Crimes tab/deep-link) covers both cases.
    * ============================================================================ */
   injectStyles();
   ensureGearUi();
 
   let isCrimesTabObserverActive = false;
+  let activeObserver = null;
 
   function initCrimesTab() {
     if (isCrimesTabObserverActive) return;
-
     waitForRoot("#faction-crimes-root", (root) => {
-      // Abort if the user navigated away while we were waiting for the DOM to load
+      // Abort if the member navigated away again while we were waiting for
+      // the tab's content to actually render.
       if (!window.location.hash.includes("tab=crimes")) return;
-
-      setupObserver(root);
+      if (activeObserver) {
+        activeObserver.disconnect();
+        activeObserver = null;
+      }
+      // Fresh tab entry means a fresh render from Torn — the "vanilla order"
+      // snapshot from a previous visit to this tab no longer applies.
+      originalCardOrder = null;
+      activeObserver = setupObserver(root);
       isCrimesTabObserverActive = true;
     });
   }
@@ -1834,15 +2113,14 @@
     if (window.location.hash.includes("tab=crimes")) {
       initCrimesTab();
     } else {
-      // Reset state when leaving the tab so it can re-initialize upon return.
-      // The old MutationObserver dies automatically with the removed #faction-crimes-root element.
+      // Reset so re-entering the Crimes tab re-initializes cleanly. Torn's
+      // own router removes #faction-crimes-root when leaving the tab, so
+      // the old observer stops seeing anything relevant regardless; we still
+      // explicitly disconnect it in initCrimesTab() above for tidiness.
       isCrimesTabObserverActive = false;
     }
   }
 
-  // Listen for Torn's single-page application hash navigation
   window.addEventListener("hashchange", handleRoute);
-
-  // Initial check on load
   handleRoute();
 })();
