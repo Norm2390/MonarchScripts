@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.2.1
+// @version      1.3.0
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
