@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.1.0
+// @version      1.2.0
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
@@ -89,6 +89,9 @@
     "Hostile Takeover": {
       "Muscle": 68, "Negotiator": 68, "Cat Burglar": 68, "Kidnapper": 68, "Hacker": 68, "Engineer": 68,
     },
+    "Ship Happens": {
+      "Assassin": 70, "Engineer": 70, "Hustler": 70, "Interrogator": 70, "Spy": 70,
+    },
       "Cleared for Takeoff": {
       "Interrogator": 75, "Assassin": 75, "Imitator": 75, "Lookout": 75, "Pickpocket": 75, "Techie": 75,
     },
@@ -99,18 +102,32 @@
   // Fill in more crimes here as you gather the numbers.
   const ROLE_WEIGHTS = {
     "Snow Blind": { "Muscle #1": 8.5, "Hustler": 48.4, "Imitator": 34.6, "Muscle #2": 8.5 },
+
+    "Window of Opportunity": { "Looter #2": 25, "Muscle #1": 23, "Looter #1": 20, "Muscle #2": 17, "Engineer": 15 },
+    
     "Blast from the Past": {
       "Picklock #1": 10.8, "Muscle": 34.6, "Hacker": 12.1,
       "Bomber": 15.6, "Picklock #2": 2.9, "Engineer": 24.0,
     },
+
+    "Cleared for Takeoff": { "Interrogator": 25, "Imitator": 25, "Assassin": 18, "Pickpocket": 12, "Techie": 11, "Lookout": 9 },
+    
     "Clinical Precision": { "Imitator": 43.3, "Cleaner": 21.7, "Assassin": 16.1, "Cat Burglar": 18.9 },
+    
     "Break the Bank": {
       "Muscle #1": 13.5, "Muscle #2": 10.1, "Muscle #3": 31.7,
       "Robber": 12.7, "Thief #1": 2.9, "Thief #2": 29.1,
     },
+    
     "Lock Stock": { "Assassin": 38.6, "Muscle #2": 10.6, "Hacker": 15.3, "Muscle #1": 10.6, "Smuggler": 24.9 },
+
+    "Ship Happens": { "Assassin": "TBD:70+ CPR", "Engineer": "TBD:70+ CPR", "Hustler": "TBD:70+ CPR", "Interrogator": "TBD:70+CPR", "Spy": "TBD:70+CPR" },
+    
     "Stacking the Deck": { "Cat Burglar": 23.4, "Driver": 3.0, "Hacker": 25.4, "Imitator": 48.2 },
+    
     "Ace in the Hole": { "Driver": 7.6, "Hacker": 28.3, "Imitator": 21.1, "Muscle #1": 18.3, "Muscle #2": 24.7 },
+
+    "Hostile Takeover": { "Negotiator": 25, "Engineer": 20, "Hacker": 10, "Kidnapper": 13, "Muscle": 15, "Cat Burglar":17 },
   };
 
   // How many points below the listed requirement we'll still call a "pass".
@@ -138,7 +155,7 @@
   // after everything named, difficulty being equal).
   const CRIME_IMPORTANCE_ORDER = [
     "Hostile Takeover", "Ace in the Hole",
-    "Break the Bank", "Lock Stock", "Stacking the Deck", "Clinical Precision", "Cleared for Takeoff",
+    "Break the Bank", "Ship Happens" ,"Lock Stock", "Stacking the Deck", "Clinical Precision", "Cleared for Takeoff",
     "Blast from the Past", "Window of Opportunity",
   ];
   function crimeImportanceIndex(crimeName) {
