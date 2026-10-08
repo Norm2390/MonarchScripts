@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.2.0
+// @version      1.2.1
 // @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
@@ -120,8 +120,6 @@
     },
     
     "Lock Stock": { "Assassin": 38.6, "Muscle #2": 10.6, "Hacker": 15.3, "Muscle #1": 10.6, "Smuggler": 24.9 },
-
-    "Ship Happens": { "Assassin": "TBD:70+ CPR", "Engineer": "TBD:70+ CPR", "Hustler": "TBD:70+ CPR", "Interrogator": "TBD:70+CPR", "Spy": "TBD:70+CPR" },
     
     "Stacking the Deck": { "Cat Burglar": 23.4, "Driver": 3.0, "Hacker": 25.4, "Imitator": 48.2 },
     
