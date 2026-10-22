@@ -1,20 +1,27 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.3.0
-// @description  Faction CPR requirements + role qualification highlighting + role weights + OC card reordering for Torn OC 2.0. All local, no API, information off your crime page.
+// @version      1.5.0
+// @description  Faction CPR requirements, role qualification highlighting, role weights/success rates (crimehub). MM themed Red. Localized CPR tracking for members. 100% client side (Browser) storage, nothing external.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
 // @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MM_OCPrioritizer.user.js
 // @updateURL    https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MM_OCPrioritizer.user.js
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @connect      crimeshub-2b4b0.firebaseapp.com
 // @author       Jocko [55408]
 // ==/UserScript==
 
 /*
  * ============================================================================
  * PROPRIETARY — Mutation faction internal tool. Not open source, not for
- * public/collaborative use or redistribution.
+ * public/collaborative use or redistribution. 
+ *
+ * Only Storage is on users local browser; deletable through user settings sidebar. crimeshub is only to calculate win/loss probability based on in browser data; no data is being uploaded or sent anywhere. 100% browser, client side.
+ *
+ * role weights + crime success estimation/probability from crimeHub
  *
  * This script is built specifically for Mutation members to help organize
  * and prioritize the faction's OC cards. Do not copy, fork, re-host,
@@ -27,18 +34,297 @@
   "use strict";
 
   /* ============================================================================
+   * CRIMESHUB API & SUCCESS PROBABILITY CONFIG
+   * ============================================================================ */
+  const CRIMESHUB_SITE = 'https://crimeshub-2b4b0.firebaseapp.com/';
+  const CRIMESHUB_REFRESH_MS = 6 * 60 * 60 * 1000;
+  const CRIMESHUB_CACHE_KEY = 'tornOC_crimeshubData_v1';
+
+  const BUILTIN_CRIMESHUB_DATA = {"blastfromthepast":{"v":"","name":"Blast From The Past","roles":{"muscle":"Muscle","engineer":"Engineer","bomber":"Bomber","picklock1":"Picklock1","hacker":"Hacker","picklock2":"Picklock2"},"n":[["A1-C1","c",["Muscle"]],["A2-C1","c",["Hacker"]],["A2-C2","c",["Picklock1"]],["A2-C3","c",["Picklock1"]],["A3-C1","c",["Muscle"]],["A3-C2","c",["Muscle"]],["A4-C1","c",["Engineer"]],["A5-C1","c",["Bomber"]],["A6-C1","c",["Picklock2"]],["A6-C2","c",["Engineer","Picklock2"]],["A7-C1","c",["Picklock1"]],["A8-C1","c",["Hacker"]],["A10S","g"],["A1-C2","c",["Picklock1","Picklock2"]],["A1-C3","c",["Hacker"]],["A4-C2","c",["Muscle","Engineer"]],["A5-C2","c",["Engineer","Bomber"]],["A5F","b"],["A7-C2","c",["Picklock2"]],["B7-C1","c",["Picklock1"]],["B8-C1","c",["Hacker"]],["B8S2","g"],["A9S","g"],["B8S1","g"],["B6-C1","c",["Picklock2"]],["A4F","b"],["A3F","b"],["A2F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2P","A7-C1"],["A7-C1P","A8-C1"],["A8-C1F","A10S"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2F","A5F"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A6-C1P","A7-C1"],["A7-C1F","A7-C2"],["A7-C2F","B7-C1"],["B7-C1F","B8-C1"],["B8-C1F","B8S2"],["A8-C1P","A9S"],["A2-C2P","A3-C1"],["B7-C1P","B8-C1"],["B7-C1P","B8S1"],["A6-C2F","B6-C1"],["B6-C1P","B7-C1"],["B6-C1F","B7-C1"],["A5-C2P","B6-C1"],["A1-C2P","A2-C1"],["A7-C2P","A8-C1"],["A4-C2F","A4F"],["A3-C2F","A3F"],["A2-C3F","A2F"],["A1-C3F","A1F"]],"w":{"Muscle":34,"Engineer":24,"Bomber":16,"Picklock1":11,"Hacker":12,"Picklock2":3}},"noreserve":{"v":"","name":"No Reserve","roles":{"techie":"Techie","engineer":"Engineer","carthief":"CarThief"},"n":[["A1-C1","c",["Techie"]],["A1-C2","c",["Techie"]],["A2-C1","c",["Techie"]],["A2-C2","c",["Techie"]],["A3-C1","c",["Techie"]],["A3-C2","c",["Engineer"]],["A3-C3","c",["CarThief"]],["B4-C1","c",["Engineer"]],["B5-C1","c",["CarThief"]],["B8-C1","c",["Techie"]],["B8-C2","c",["CarThief","Engineer"]],["B8F","b"],["A1-C3","c",["CarThief"]],["A4-C1","c",["CarThief"]],["A5-C1","c",["Engineer"]],["A6-C1","c",["Techie"]],["B9S","g"],["B4F","b"],["B5-C2","c",["Techie"]],["B6-C1","c",["CarThief","Engineer"]],["B7S","g"],["B8S","g"],["A2-C3","c",["Engineer"]],["B6-C2","c",["Techie"]],["B5F","b"],["A7S","g"],["A3F","b"],["B6F","b"],["A1F","b"],["A2F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A3-C3"],["A3-C3P","B4-C1"],["B4-C1P","B5-C1"],["B5-C1P","B8-C1"],["B8-C1F","B8-C2"],["B8-C2F","B8F"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A3-C2P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","B8-C1"],["B8-C1P","B9S"],["A3-C1P","A4-C1"],["A4-C1F","B4-C1"],["B4-C1F","B4F"],["A2-C1P","A3-C1"],["A5-C1F","B5-C1"],["B5-C1F","B5-C2"],["B5-C2P","B6-C1"],["B6-C1P","B7S"],["B8-C2P","B8S"],["A1-C1P","A2-C1"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["B6-C1F","B6-C2"],["B6-C2P","B7S"],["B5-C2F","B5F"],["A6-C1P","A7S"],["A3-C3F","A3F"],["B6-C2F","B6F"],["A1-C3F","A1F"],["A2-C3F","A2F"]],"w":{"Techie":38,"Engineer":31,"CarThief":31}},"biddingwar":{"v":"","name":"Bidding War","roles":{"robber3":"Robber3","robber2":"Robber2","bomber2":"Bomber2","driver":"Driver","bomber1":"Bomber1","robber1":"Robber1"},"n":[["A1-C1","c",["Bomber1"]],["A1-C2","c",["Bomber1","Bomber2"]],["A2-C1","c",["Driver"]],["A3-C1","c",["Robber1"]],["A3-C2","c",["Robber2"]],["A4-C1","c",["Robber3"]],["A4-C2","c",["Bomber2"]],["A5-C1","c",["Robber3"]],["A5-C2","c",["Robber2"]],["A6-C2","c",["Robber2"]],["A6S2","g"],["A1-C3","c",["Driver"]],["A3-C3","c",["Robber1","Robber2"]],["A6-C1","c",["Robber3","Driver"]],["A5F","b"],["A2-C2","c",["Driver"]],["A2-C3","c",["Driver"]],["A4-C3","c",["Robber1"]],["A4F","b"],["A6S","g"],["A7-C1","c",["Bomber2"]],["A8S","g"],["A8S2","g"],["A3F","b"],["A2F","b"],["A4F2","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C2"],["A6-C2F","A6S2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A3-C2F","A3-C3"],["A3-C3P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","A6-C2"],["A1-C1P","A2-C1"],["A3-C1P","A4-C1"],["A5-C2F","A5F"],["A2-C1F","A2-C2"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A2-C2P","A3-C1"],["A4-C2F","A4-C3"],["A4-C3F","A4F"],["A6-C2P","A6S"],["A6-C1P","A7-C1"],["A7-C1P","A8S"],["A7-C1F","A8S2"],["A3-C3F","A3F"],["A2-C3F","A2F"],["A4-C3P","A4F2"],["A1-C3F","A1F"]],"w":{"Robber3":32,"Robber2":22,"Bomber2":18,"Driver":13,"Bomber1":8,"Robber1":7}},"stackingthedeck":{"v":"","name":"Stacking The Deck","roles":{"imitator":"Imitator","hacker":"Hacker","catburglar":"CatBurglar","driver":"Driver"},"n":[["A1-C1","c",["CatBurglar"]],["A1-C2","c",["CatBurglar","Imitator"]],["A2-C1","c",["Driver"]],["A2-C2","c",["Driver"]],["A3-C1","c",["CatBurglar"]],["A4-C1","c",["Hacker"]],["B2-C1","c",["Hacker"]],["B3-C1","c",["Imitator"]],["B4-C1","c",["Hacker"]],["B4S","g"],["B1-C1","c",["Imitator"]],["B3-C2","c",["Hacker"]],["B3F","b"],["A5-C1","c",["Hacker"]],["A5-C2","c",["Imitator"]],["A5F","b"],["B1-C2","c",["Imitator"]],["B1F","b"],["B5S","g"],["B2-C2","c",["Imitator"]],["B2F","b"],["A6S","g"],["A6-C1","c",["Imitator"]],["A7S","g"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1F","B2-C1"],["B2-C1P","B3-C1"],["B3-C1P","B4-C1"],["B4-C1F","B4S"],["A1-C1P","A2-C1"],["A2-C2F","B1-C1"],["B1-C1P","B2-C1"],["B3-C1F","B3-C2"],["B3-C2F","B3F"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2F","A5F"],["B1-C1F","B1-C2"],["B1-C2F","B1F"],["A2-C1P","A3-C1"],["B4-C1P","B5S"],["A3-C1F","B1-C1"],["B3-C2P","B4S"],["B2-C1F","B2-C2"],["B2-C2P","B3-C1"],["B1-C2P","B2-C1"],["B2-C2F","B2F"],["A5-C2P","A6S"],["A5-C1P","A6-C1"],["A6-C1F","A6S"],["A6-C1P","A7S"],["A1-C2F","A1F"]],"w":{"Imitator":48,"Hacker":26,"CatBurglar":23,"Driver":3}},"leavenotrace":{"v":"V2","name":"Leave No Trace","roles":{"imitator":"Imitator","negotiator":"Negotiator","techie":"Techie"},"n":[["A1-C1","c",["Techie"]],["A2-C1","c",["Negotiator"]],["A3-C1","c",["Imitator"]],["A3-C2","c",["Negotiator"]],["A4-C1","c",["Imitator"]],["A4-C2","c",["Imitator"]],["A6-C1","c",["Techie"]],["A6-C2","c",["Negotiator"]],["A6-C3","c",["Imitator"]],["A6F","b"],["A1-C2","c",["Negotiator"]],["A2-C2","c",["Imitator"]],["A5-C1","c",["Techie"]],["A8-C1","c",["Negotiator"]],["A8S2","g"],["A3-C3","c",["Techie"]],["A6S","g"],["A8S1","g"],["A7-C1","c",["Negotiator"]],["A7S2","g"],["A4F","b"],["B1-C1","c",["Imitator"]],["B1-C2","c",["Negotiator"]],["B2-C1","c",["Techie","Negotiator"]],["B2F","b"],["A3F","b"],["B1F","b"],["B3S","g"],["A7S","g"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2F","A6-C3"],["A6-C3F","A6F"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A4-C1P","A5-C1"],["A5-C1F","A6-C1"],["A6-C1P","A8-C1"],["A8-C1F","A8S2"],["A3-C2F","A3-C3"],["A3-C3P","A4-C1"],["A6-C3P","A6S"],["A8-C1P","A8S1"],["A5-C1P","A7-C1"],["A7-C1F","A7S2"],["A6-C2P","A8-C1"],["A4-C2F","A4F"],["A3-C1P","A4-C1"],["A2-C2F","B1-C1"],["B1-C1F","B1-C2"],["B1-C2P","B2-C1"],["B2-C1F","B2F"],["A3-C3F","A3F"],["B1-C2F","B1F"],["B1-C1P","B2-C1"],["B1-C2P","B3S"],["A7-C1P","A7S"],["A1-C2F","A1F"]],"w":{"Imitator":37,"Negotiator":34,"Techie":29}},"snowblind":{"v":"","name":"Snow Blind","roles":{"hustler":"Hustler","imitator":"Imitator","muscle1":"Muscle1","muscle2":"Muscle2"},"n":[["A1-C1","c",["Muscle1","Muscle2"]],["A2-C1","c",["Hustler"]],["A2-C2","c",["Imitator"]],["A3-C1","c",["Imitator"]],["A3-C2","c",["Hustler"]],["A4-C1","c",["Hustler"]],["A4-C2","c",["Hustler"]],["A5-C1","c",["Hustler"]],["A6-C1","c",["Imitator"]],["A7-C1","c",["Imitator"]],["A8S1","g"],["A5-C2","c",["Imitator"]],["A6-C2","c",["Hustler"]],["B7-C1","c",["Muscle1","Muscle2"]],["B7S1","g"],["A1-C2","c",["Muscle1"]],["A8S2","g"],["A1-C3","c",["Muscle2"]],["B7S2","g"],["A6-C3","c",["Muscle1","Muscle2"]],["B8S","g"],["A4-C3","c",["Hustler"]],["A4F","b"],["A6F","b"],["A4S","g"],["A5F","b"],["B1-C1","c",["Muscle1"]],["B1-C2","c",["Muscle2"]],["B1F1","b"],["B1F2","b"],["B1F3","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1P","A8S1"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2P","B7-C1"],["B7-C1P","B7S1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A7-C1F","A8S2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A3-C1P","A4-C1"],["B7-C1F","B7S2"],["A6-C2F","A6-C3"],["A6-C3P","B8S"],["A4-C2F","A4-C3"],["A4-C3F","A4F"],["A6-C3F","A6F"],["A4-C3P","A4S"],["A5-C2F","A5F"],["A2-C2F","B1-C1"],["B1-C1F","B1-C2"],["B1-C2F","B1F1"],["B1-C2P","B1F2"],["A3-C2F","A4-C3"],["B1-C1P","B1F3"],["A1-C3F","A1F"]],"w":{"Hustler":48,"Imitator":36,"Muscle1":8,"Muscle2":8}},"marketforces":{"v":"","name":"Market Forces","roles":{"enforcer":"Enforcer","negotiator":"Negotiator","muscle":"Muscle","lookout":"Lookout","arsonist":"Arsonist"},"n":[["A1-C1","c",["Lookout"]],["A2-C1","c",["Negotiator"]],["A3-C1","c",["Enforcer"]],["A3-C2","c",["Negotiator"]],["A3-C3","c",["Muscle"]],["B4-C1","c",["Arsonist"]],["B5-C1","c",["Muscle"]],["B5-C2","c",["Enforcer","Lookout"]],["B5F","b"],["A4-C1","c",["Arsonist"]],["A5-C1","c",["Muscle"]],["A5-C2","c",["Enforcer","Lookout"]],["A7-C1","c",["Negotiator"]],["A7-C2","c",["Negotiator"]],["A7S","g"],["A1-C2","c",["Enforcer"]],["A2-C2","c",["Muscle"]],["A8-C1","c",["Muscle"]],["A8S","g"],["A4-C2","c",["Arsonist"]],["B5S","g"],["A8S2","g"],["B4F","b"],["A5S","g"],["A4S","g"],["A3F","b"],["A2F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A3-C3"],["A3-C3P","B4-C1"],["B4-C1P","B5-C1"],["B5-C1F","B5-C2"],["B5-C2F","B5F"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A7-C1"],["A7-C1F","A7-C2"],["A7-C2F","A7S"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A7-C2P","A8-C1"],["A8-C1P","A8S"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","B5-C1"],["B5-C2P","B5S"],["A5-C1P","A7-C1"],["A7-C1P","A8-C1"],["B5-C1P","B5S"],["A8-C1F","A8S2"],["B4-C1F","B4F"],["A5-C2F","A5S"],["A4-C2F","A4S"],["A3-C3F","A3F"],["A2-C2F","A2F"],["A1-C2F","A1F"]],"w":{"Enforcer":29,"Negotiator":27,"Muscle":23,"Lookout":16,"Arsonist":5}},"stagefright":{"v":"","name":"Stage Fright","roles":{"sniper":"Sniper","muscle1":"Muscle1","enforcer":"Enforcer","muscle3":"Muscle3","lookout":"Lookout","muscle2":"Muscle2"},"n":[["A1-C1","c",["Lookout","Muscle2"]],["A1-C2","c",["Lookout","Muscle1"]],["A2-C1","c",["Sniper"]],["A3-C1","c",["Muscle1","Muscle3"]],["B1-C1","c",["Enforcer"]],["B1-C2","c",["Sniper"]],["B1F","b"],["A1-C3","c",["Enforcer","Muscle3"]],["B2-C1","c",["Muscle1"]],["B3-C1","c",["Sniper"]],["B3F","b"],["A2-C2","c",["Muscle1"]],["A4-C1","c",["Enforcer"]],["B2-C2","c",["Sniper"]],["B2S","g"],["B4S","g"],["B2F","b"],["A2F","b"],["A5-C1","c",["Lookout","Sniper"]],["A6S","g"],["A1F","b"],["A7S","g"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","B1-C1"],["B1-C1F","B1-C2"],["B1-C2F","B1F"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["B1-C1P","B2-C1"],["B2-C1P","B3-C1"],["B3-C1F","B3F"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1F","B2-C1"],["B2-C1F","B2-C2"],["B2-C2P","B2S"],["B3-C1P","B4S"],["B1-C2P","B2-C1"],["B2-C2F","B2F"],["A2-C2F","A2F"],["A4-C1P","A5-C1"],["A5-C1P","A6S"],["A1-C3F","A1F"],["A5-C1F","A7S"]],"w":{"Sniper":46,"Muscle1":20,"Enforcer":16,"Muscle3":9,"Lookout":6,"Muscle2":3}},"smokeandwingmirrors":{"v":"","name":"Smoke And Wing Mirrors","roles":{"carthief":"CarThief","imitator":"Imitator","hustler2":"Hustler2","hustler1":"Hustler1"},"n":[["A1-C1","c",["Imitator"]],["A1-C2","c",["CarThief"]],["A2-C1","c",["Imitator"]],["A3-C1","c",["CarThief"]],["A3-C2","c",["CarThief"]],["A4-C1","c",["Hustler1","Hustler2"]],["A5-C1","c",["CarThief"]],["A6-C1","c",["Hustler1"]],["A6-C2","c",["CarThief"]],["A6-C3","c",["CarThief"]],["A9S","g"],["A1-C3","c",["Imitator"]],["A2-C2","c",["Imitator"]],["A5-C2","c",["Imitator"]],["B3-C1","c",["Imitator"]],["B3S2","g"],["A2-C3","c",["CarThief"]],["B3S","g"],["A8S","g"],["A4-C2","c",["Hustler2"]],["A4-C3","c",["Hustler2"]],["B2-C1","c",["Hustler1"]],["B2-C2","c",["Hustler2"]],["B2F","b"],["A7S","g"],["C1F","b"],["A4F","b"],["A6F","b"],["A3F","b"],["A2F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2F","A6-C3"],["A6-C3P","A9S"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1P","A4-C1"],["A5-C1F","A5-C2"],["A5-C2P","B3-C1"],["B3-C1F","B3S2"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["B3-C1P","B3S"],["A6-C2P","A8S"],["A1-C1P","A2-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4-C3"],["A4-C3P","B2-C1"],["B2-C1F","B2-C2"],["B2-C2P","B3-C1"],["A4-C2P","B2-C1"],["B2-C2F","B2F"],["B2-C1P","B3-C1"],["A6-C1P","A7S"],["A5-C2F","C1F"],["A4-C3F","A4F"],["A6-C3F","A6F"],["A3-C2F","A3F"],["A2-C3F","A2F"],["A1-C3F","A1F"]],"w":{"CarThief":51,"Imitator":27,"Hustler2":13,"Hustler1":9}},"cashmeifyoucan":{"v":"","name":"Cash Me If You Can","roles":{"thief1":"Thief1","lookout":"Lookout","thief2":"Thief2"},"n":[["A1-C1","c",["Thief1"]],["A1-C2","c",["Thief1"]],["A2-C1","c",["Thief2"]],["A3-C1","c",["Thief1"]],["A3-C2","c",["Thief1"]],["A4-C1","c",["Thief2"]],["A4-C2","c",["Thief2"]],["B1-C1","c",["Thief1","Thief2"]],["B1F","b"],["A2-C2","c",["Thief1"]],["A5-C1","c",["Lookout"]],["A6-C1","c",["Thief2"]],["A7S","g"],["A2-C3","c",["Thief2"]],["B2-C1","c",["Lookout"]],["B3S","g"],["A1-C3","c",["Thief2"]],["B2F","b"],["A4S","g"],["A2F","b"],["A3-C3","c",["Thief2"]],["C1-C1","c",["Thief1"]],["C1F","b"],["A8S","g"],["C2S","g"],["A3F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2F","B1-C1"],["B1-C1F","B1F"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7S"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A3-C1P","A4-C1"],["A5-C1F","B1-C1"],["B1-C1P","B2-C1"],["B2-C1P","B3S"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["B2-C1F","B2F"],["A1-C1P","A2-C1"],["A4-C2P","A4S"],["A2-C3F","A2F"],["A3-C2F","A3-C3"],["A3-C3P","C1-C1"],["C1-C1F","C1F"],["A6-C1F","A8S"],["C1-C1P","C2S"],["A3-C3F","A3F"],["A1-C3F","A1F"]],"w":{"Thief1":50,"Lookout":28,"Thief2":22}},"mobmentality":{"v":"","name":"Mob Mentality","roles":{"looter1":"Looter1","looter2":"Looter2","looter4":"Looter4","looter3":"Looter3"},"n":[["A1-C1","c",["Looter1"]],["A2-C1","c",["Looter2"]],["A2-C2","c",["Looter4"]],["A2-C3","c",["Looter2","Looter3"]],["A3-C1","c",["Looter3"]],["A3-C2","c",["Looter4"]],["A3-C3","c",["Looter1"]],["A3-C4","c",["Looter2"]],["D1-C1","c",["Looter3"]],["D3S","g"],["A4-C1","c",["Looter2"]],["A4-C2","c",["Looter1"]],["A4F","b"],["A5-C1","c",["Looter4"]],["A5-C2","c",["Looter1"]],["A7S2","g"],["A1-C2","c",["Looter2"]],["A1-C3","c",["Looter3"]],["A7-C1","c",["Looter2"]],["A7S","g"],["A5F","b"],["D2F","b"],["B1-C1","c",["Looter4"]],["B3S","g"],["A2F","b"],["B2S","g"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A3-C3"],["A3-C3F","A3-C4"],["A3-C4F","D1-C1"],["D1-C1P","D3S"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4F"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A7S2"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A2-C1P","A3-C1"],["A1-C2P","A2-C1"],["A3-C1P","A4-C1"],["A5-C1P","A7-C1"],["A7-C1P","A7S"],["A5-C2F","A5F"],["A3-C3P","D1-C1"],["D1-C1F","D2F"],["A2-C2P","A3-C1"],["A7-C1F","A7S2"],["A4-C2P","B1-C1"],["B1-C1F","B3S"],["A3-C4P","D1-C1"],["A2-C3F","A2F"],["B1-C1P","B2S"],["A1-C3F","A1F"]],"w":{"Looter1":34,"Looter2":26,"Looter4":23,"Looter3":18}},"counteroffer":{"v":"","name":"Counter Offer","roles":{"robber":"Robber","engineer":"Engineer","picklock":"Picklock","hacker":"Hacker","looter":"Looter"},"n":[["A1-C1","c",["Robber"]],["A2-C1","c",["Engineer"]],["A3-C1","c",["Hacker"]],["A4-C1","c",["Hacker"]],["A5-C1","c",["Robber","Picklock"]],["A6-C1","c",["Looter","Engineer"]],["A7S","g"],["A2-C2","c",["Robber"]],["A3-C2","c",["Hacker"]],["B3-C1","c",["Looter"]],["B4-C1","c",["Picklock"]],["B5S","g"],["A1-C2","c",["Robber","Picklock"]],["A7S2","g"],["A5-C2","c",["Looter"]],["A5S","g"],["A4-C2","c",["Engineer"]],["A4F","b"],["A5-C3","c",["Looter","Robber"]],["A5F","b"],["A1-C3","c",["Looter","Picklock"]],["B3-C2","c",["Looter","Engineer"]],["A2F","b"],["B4-C2","c",["Engineer","Picklock"]],["B3F","b"],["A1F","b"],["B4F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","B3-C1"],["B3-C1P","B4-C1"],["B4-C1P","B5S"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","A7S2"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A5-C1F","A5-C2"],["A5-C2P","A5S"],["A6-C1P","A7S"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4F"],["A4-C2P","A5-C1"],["A2-C2F","A2F"],["A1-C3F","A1F"],["A5-C2F","A5-C3"],["A5-C3P","A5S"],["B3-C1F","B3-C2"],["B3-C2P","B4-C1"],["B4-C1F","B4-C2"],["B4-C2P","B5S"],["A5-C3F","A5F"],["B3-C2F","B3F"],["B4-C2F","B4F"]],"w":{"Robber":36,"Engineer":28,"Picklock":17,"Hacker":12,"Looter":7}},"breakthebank":{"v":"V2","name":"Break The Bank","roles":{"muscle3":"Muscle3","thief2":"Thief2","muscle1":"Muscle1","robber":"Robber","muscle2":"Muscle2","thief1":"Thief1"},"n":[["A1-C1","c",["Robber","Muscle1"]],["A1-C2","c",["Muscle2"]],["A1-C3","c",["Muscle3"]],["A2-C1","c",["Muscle2"]],["A2-C2","c",["Muscle2","Thief1"]],["A3-C1","c",["Muscle3"]],["A3-C2","c",["Thief2"]],["A4-C2","c",["Robber","Thief2"]],["A5-C1","c",["Muscle3"]],["A6-C1","c",["Robber","Muscle1"]],["A7-C1","c",["Muscle1"]],["A8-C1","c",["Robber","Thief1"]],["A8S","g"],["A4-C1","c",["Thief2"]],["A7-C2","c",["Robber"]],["A10S","g"],["A8S2","g"],["A5-C2","c",["Muscle1","Muscle3"]],["A9S","g"],["A5F","b"],["A4F","b"],["B1-C1","c",["Thief2"]],["B2-C1","c",["Muscle3"]],["B2-C2","c",["Muscle1"]],["B3S","g"],["B1F","b"],["B2F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1P","A8-C1"],["A8-C1P","A8S"],["A1-C2P","A2-C1"],["A3-C2P","A4-C1"],["A4-C1P","A5-C1"],["A7-C1F","A7-C2"],["A7-C2F","A10S"],["A4-C1F","A4-C2"],["A8-C1F","A8S2"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A7-C2P","A9S"],["A2-C1P","A3-C1"],["A5-C2F","A5F"],["A3-C1P","A4-C1"],["A1-C1P","A2-C1"],["A6-C1F","A7-C2"],["A4-C2F","A4F"],["A2-C2F","B1-C1"],["B1-C1P","B2-C1"],["B2-C1F","B2-C2"],["B2-C2P","B3S"],["B1-C1F","B1F"],["B2-C2F","B2F"],["B2-C1P","B3S"],["A1-C3F","A1F"]],"w":{"Muscle3":32,"Thief2":29,"Muscle1":14,"Robber":13,"Muscle2":10,"Thief1":3}},"aceinthehole":{"v":"V2","name":"Ace In The Hole","roles":{"hacker":"Hacker","imitator":"Imitator","muscle2":"Muscle2","muscle1":"Muscle1","driver":"Driver"},"n":[["A1-C1","c",["Imitator"]],["B2-C1","c",["Muscle1","Muscle2"]],["B3-C1","c",["Hacker"]],["B3-C2","c",["Hacker"]],["B4-C1","c",["Muscle1","Muscle2"]],["B5-C1","c",["Driver"]],["B6-C1","c",["Hacker"]],["B7S","g"],["B6-C2","c",["Hacker"]],["A2-C1","c",["Muscle1","Muscle2"]],["A3-C1","c",["Hacker"]],["A3-C2","c",["Hacker"]],["A3-C3","c",["Hacker"]],["A3F","b"],["A4-C1","c",["Muscle1","Muscle2"]],["A5-C1","c",["Driver"]],["A6-C1","c",["Hacker"]],["A7-C1","c",["Imitator"]],["A8S","g"],["A4-C2","c",["Imitator"]],["A4-C3","c",["Imitator","Muscle2"]],["A5-C2","c",["Driver"]],["A7-C2","c",["Muscle1","Muscle2"]],["A9S","g"],["A2-C2","c",["Muscle1","Muscle2"]],["C6-C1","c",["Imitator"]],["C7-C1","c",["Muscle1","Muscle2"]],["C8S","g"],["A2-C3","c",["Muscle2"]],["A2F","b"],["C6-C2","c",["Imitator","Muscle2"]],["C9S","g"],["B3F","b"],["A5-C3","c",["Driver"]],["B2-C2","c",["Muscle1","Muscle2"]],["B2F","b"],["A10S","g"],["B5-C2","c",["Driver"]],["D6-C1","c",["Hacker"]],["D6-C2","c",["Hacker"]],["D7S","g"],["D6F","b"],["C6F","b"],["B4-C2","c",["Muscle1"]],["C7F","b"],["B6F","b"],["A4F","b"],["B5F","b"],["B4F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","B2-C1"],["B2-C1P","B3-C1"],["B3-C1F","B3-C2"],["B3-C2P","B4-C1"],["B4-C1P","B5-C1"],["B5-C1P","B6-C1"],["B6-C1P","B7S"],["B6-C1F","B6-C2"],["B6-C2P","B7S"],["B3-C1P","B4-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A3-C3"],["A3-C3F","A3F"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1P","A8S"],["A3-C3P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4-C3"],["A4-C3P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A7-C1F","A7-C2"],["A7-C2P","A9S"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C2P","A4-C1"],["A4-C2P","A5-C1"],["A6-C1F","C6-C1"],["C6-C1P","C7-C1"],["C7-C1P","C8S"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A2-C3F","A2F"],["C6-C1F","C6-C2"],["C6-C2P","C9S"],["B3-C2F","B3F"],["A5-C2F","A5-C3"],["A5-C3F","C6-C1"],["B2-C1F","B2-C2"],["B2-C2F","B2F"],["B2-C2P","B3-C1"],["A5-C3P","A6-C1"],["A7-C2F","A10S"],["B5-C1F","B5-C2"],["B5-C2P","D6-C1"],["D6-C1F","D6-C2"],["D6-C2P","D7S"],["D6-C2F","D6F"],["C6-C2F","C6F"],["B4-C1F","B4-C2"],["B4-C2P","B5-C1"],["D6-C1P","D7S"],["C7-C1F","C7F"],["B6-C2F","B6F"],["A4-C3F","A4F"],["B5-C2F","B5F"],["B4-C2F","B4F"]],"w":{"Hacker":28,"Imitator":21,"Muscle2":25,"Muscle1":18,"Driver":8}},"gaslighttheway":{"v":"","name":"Gaslight The Way","roles":{"imitator3":"Imitator3","imitator2":"Imitator2","looter3":"Looter3","imitator1":"Imitator1","looter1":"Looter1","looter2":"Looter2"},"n":[["A1-C1","c",["Imitator1","Looter1"]],["A2-C1","c",["Imitator2"]],["A3-C1","c",["Imitator3"]],["A4-C1","c",["Looter3"]],["A4-C2","c",["Looter3"]],["A4-C2N","u"],["A5-C1","c",["Looter2","Looter3"]],["A7-C1","c",["Imitator2"]],["A7S","g"],["A2-C2","c",["Imitator2"]],["A1-C2","c",["Imitator1","Looter1"]],["A2F","b"],["A3-C2","c",["Imitator3"]],["B8-C1","c",["Looter3"]],["B9S","g"],["A3F","b"],["B7-C1","c",["Imitator2"]],["B7S","g"],["A7S2","g"],["A1-C3","c",["Imitator1","Looter1"]],["B7S2","g"],["B8F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1P","A7-C1"],["A7-C1P","A7S"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A4-C1P","A5-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C2F","A2F"],["A3-C1F","A3-C2"],["A3-C2P","B8-C1"],["B8-C1P","B9S"],["A3-C2F","A3F"],["A5-C1F","B7-C1"],["B7-C1P","B7S"],["A7-C1F","A7S2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["B7-C1F","B7S2"],["B8-C1F","B8F"],["A4-C2F","A4-C2N"],["A4-C2X","A5-C1"],["A1-C3F","A1F"]],"w":{"Imitator3":41,"Imitator2":27,"Looter3":13,"Imitator1":9,"Looter1":10,"Looter2":0}},"clinicalprecision":{"v":"","name":"Clinical Precision","roles":{"imitator":"Imitator","cleaner":"Cleaner","catburglar":"CatBurglar","assassin":"Assassin"},"n":[["A1-C1","c",["CatBurglar"]],["A2-C1","c",["Assassin"]],["A3-C1","c",["Cleaner"]],["A4-C1","c",["Cleaner"]],["A4-C2","c",["CatBurglar"]],["A5-C1","c",["Imitator"]],["C5-C1","c",["Cleaner"]],["C5-C2","c",["CatBurglar","Cleaner"]],["C6-C1","c",["Imitator"]],["C7S","g"],["A1-C2","c",["Assassin","CatBurglar"]],["A6-C1","c",["Assassin"]],["A6-C2","c",["Assassin"]],["A7-C1","c",["Assassin","Cleaner"]],["A8S","g"],["A3-C2","c",["Cleaner"]],["A1-C3","c",["CatBurglar","Cleaner"]],["A1F","b"],["B3-C1","c",["Imitator"]],["B4-C1","c",["Imitator"]],["B4F","b"],["A2-C2","c",["Assassin"]],["C5F","b"],["B5-C1","c",["Assassin","Cleaner"]],["B6S","g"],["A6-C3","c",["Imitator"]],["A6F","b"],["A9S","g"],["C6F","b"],["A6S","g"],["A4F","b"],["B3-C2","c",["Assassin","Cleaner"]],["B3F","b"],["B5S","g"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A5-C1F","C5-C1"],["C5-C1F","C5-C2"],["C5-C2P","C6-C1"],["C6-C1P","C7S"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A4-C1P","A5-C1"],["C5-C1P","C6-C1"],["A5-C1P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2P","A7-C1"],["A7-C1P","A8S"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A6-C1P","A7-C1"],["A1-C2F","A1-C3"],["A1-C3F","A1F"],["A3-C2F","B3-C1"],["B3-C1P","B4-C1"],["B4-C1F","B4F"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["C5-C2F","C5F"],["A2-C2F","B3-C1"],["B4-C1P","B5-C1"],["B5-C1P","B6S"],["A1-C3P","A2-C1"],["A6-C2F","A6-C3"],["A6-C3F","A6F"],["A7-C1F","A9S"],["C6-C1F","C6F"],["A6-C3P","A6S"],["A4-C2F","A4F"],["B3-C1F","B3-C2"],["B3-C2P","B4-C1"],["B3-C2F","B3F"],["B5-C1F","B5S"]],"w":{"Imitator":43,"Cleaner":22,"CatBurglar":19,"Assassin":16}},"guardianangels":{"v":"","name":"Guardian Ángels","roles":{"hustler":"Hustler","engineer":"Engineer","enforcer":"Enforcer"},"n":[["A1-C1","c",["Hustler"]],["A2-C1","c",["Engineer"]],["A3-C1","c",["Enforcer"]],["A4-C1","c",["Engineer"]],["B4-C1","c",["Engineer"]],["B5-C1","c",["Hustler"]],["B6S","g"],["A2-C2","c",["Enforcer","Engineer"]],["A3-C2","c",["Hustler"]],["A5-C1","c",["Hustler"]],["A6-C1","c",["Enforcer"]],["A7S","g"],["B5F","b"],["A5-C2","c",["Enforcer"]],["A6-C2","c",["Engineer"]],["A6-C3","c",["Hustler"]],["A9S","g"],["A5-C3","c",["Enforcer"]],["A8S","g"],["A1-C2","c",["Enforcer"]],["A2-C3","c",["Enforcer","Engineer"]],["B4-C2","c",["Enforcer","Hustler"]],["A1-C3","c",["Enforcer"]],["A1F","b"],["B4F","b"],["A6F","b"],["A5F","b"],["A2F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1F","B4-C1"],["B4-C1P","B5-C1"],["B5-C1P","B6S"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7S"],["B5-C1F","B5F"],["A5-C1F","A5-C2"],["A5-C2P","A6-C2"],["A6-C2F","A6-C3"],["A6-C3P","A9S"],["A5-C2F","A5-C3"],["A5-C3P","A6-C2"],["A6-C2P","A8S"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["B4-C1F","B4-C2"],["B4-C2P","B5-C1"],["A6-C1F","A6-C2"],["A1-C2F","A1-C3"],["A1-C3F","A1F"],["A3-C2F","B4-C1"],["B4-C2F","B4F"],["A1-C3P","A2-C1"],["A6-C3F","A6F"],["A5-C3F","A5F"],["A2-C3F","A2F"]],"w":{"Hustler":42,"Engineer":31,"Enforcer":27}},"sneakygitgrab":{"v":"","name":"Sneaky Git Grab","roles":{"pickpocket":"Pickpocket","imitator":"Imitator","techie":"Techie","hacker":"Hacker"},"n":[["A1-C1","c",["Imitator"]],["A1-C2","c",["Imitator"]],["A1-C3","c",["Pickpocket"]],["A2-C1","c",["Pickpocket"]],["A3-C1","c",["Imitator","Pickpocket"]],["A4-C1","c",["Techie"]],["A5-C1","c",["Hacker"]],["A6-C1","c",["Techie"]],["A7-C1","c",["Imitator"]],["A7S2","g"],["A3-C2","c",["Imitator"]],["A7S","g"],["A1F","b"],["A5-C2","c",["Hacker"]],["A2-C2","c",["Pickpocket"]],["A5-C3","c",["Imitator","Hacker"]],["A5F","b"],["A6-C2","c",["Imitator","Hacker"]],["A8S","g"],["A4-C2","c",["Techie","Pickpocket"]],["A9S","g"],["A2F","b"],["B6-C1","c",["Hacker"]],["B6F","b"],["A3-C3","c",["Pickpocket"]],["A3F","b"],["A4F","b"],["B7S","g"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1F","A7S2"],["A1-C2P","A2-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A7-C1P","A7S"],["A1-C1P","A2-C1"],["A1-C3F","A1F"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A5-C2F","A5-C3"],["A5-C3F","A5F"],["A6-C1F","A6-C2"],["A6-C2P","A8S"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A6-C2F","A9S"],["A2-C2F","A2F"],["A5-C3P","B6-C1"],["B6-C1F","B6F"],["A3-C2F","A3-C3"],["A3-C3P","A4-C1"],["A3-C3F","A3F"],["A4-C2F","A4F"],["B6-C1P","B7S"]],"w":{"Pickpocket":51,"Imitator":18,"Techie":17,"Hacker":14}},"cranereaction":{"v":"V1","name":"Crane Reaction","roles":{"sniper":"Sniper","lookout":"Lookout","bomber":"Bomber","muscle1":"Muscle1","muscle2":"Muscle2","engineer":"Engineer"},"n":[["A1-C1","c",["Muscle1","Muscle2"]],["A1-C2","c",["Sniper"]],["A2-C1","c",["Lookout","Engineer"]],["A3-C1","c",["Bomber"]],["A4-C1","c",["Sniper","Lookout"]],["A5-C1","c",["Engineer","Bomber"]],["A5-C2","c",["Engineer","Bomber"]],["A6-C1","c",["Sniper","Lookout"]],["A7-C1","c",["Muscle1","Muscle2"]],["A8S","g"],["A1-C3","c",["Muscle1"]],["A4-C2","c",["Sniper","Lookout"]],["A4-C3","c",["Muscle1","Muscle2"]],["A6-C2","c",["Muscle1","Muscle2"]],["B7-C1","c",["Sniper","Lookout","Muscle1","Muscle2"]],["B7S","g"],["A1F","b"],["A2-C2","c",["Sniper"]],["A2F","b"],["B5-C1","c",["Engineer","Bomber"]],["B6-C1","c",["Sniper","Lookout"]],["B6-C2","c",["Lookout"]],["B7-C2","c",["Sniper","Lookout"]],["B7F","b"],["A7-C2","c",["Bomber"]],["A8S2","g"],["A7-C3","c",["Muscle1","Muscle2"]],["A8S3","g"],["A3-C2","c",["Sniper"]],["A3F","b"],["A7F","b"],["A4F","b"],["B5-C2","c",["Engineer","Bomber"]],["B7S2","g"],["B5F","b"],["B6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1P","A8S"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A5-C1P","A6-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4-C3"],["A4-C3P","A5-C1"],["A6-C1F","A6-C2"],["A6-C2P","B7-C1"],["B7-C1P","B7S"],["A1-C3F","A1F"],["A1-C1P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2F","A2F"],["A5-C2F","B5-C1"],["B5-C1P","B6-C1"],["B6-C1F","B6-C2"],["B6-C2P","B7-C1"],["B7-C1F","B7-C2"],["B7-C2F","B7F"],["A7-C1F","A7-C2"],["A7-C2P","A8S2"],["A7-C2F","A7-C3"],["A7-C3P","A8S3"],["A2-C2P","A3-C1"],["A3-C1F","A3-C2"],["A3-C2F","A3F"],["A3-C2P","A4-C1"],["A6-C2F","B6-C1"],["B6-C1P","B7-C1"],["A4-C2P","A5-C1"],["A7-C3F","A7F"],["A4-C3F","A4F"],["B5-C1F","B5-C2"],["B5-C2P","B6-C1"],["B7-C2P","B7S2"],["B5-C2F","B5F"],["B6-C2F","B6F"]],"w":{"Sniper":41,"Lookout":17,"Bomber":16,"Muscle1":10,"Muscle2":8,"Engineer":8}},"gonefission":{"v":"V1","name":"Gone Fission","roles":{"hijacker":"Hijacker","imitator":"Imitator","bomber":"Bomber","pickpocket":"Pickpocket","engineer":"Engineer"},"n":[["A1-C1","c",["Hijacker"]],["A2-C1","c",["Hijacker"]],["A3-C1","c",["Engineer"]],["A4-C1","c",["Imitator"]],["A5-C1","c",["Imitator","Pickpocket"]],["A6-C1","c",["Bomber"]],["A7-C1","c",["Imitator"]],["A7-C2","c",["Engineer"]],["A8S2","g"],["A2-C2","c",["Engineer","Hijacker"]],["A5-C2","c",["Imitator","Pickpocket"]],["A6-C2","c",["Bomber"]],["A1-C2","c",["Bomber"]],["A3-C2","c",["Bomber","Engineer"]],["A4-C2","c",["Pickpocket"]],["A8S3","g"],["A2F","b"],["A3-C3","c",["Engineer"]],["A3F","b"],["A1-C3","c",["Hijacker"]],["A8S","g"],["A5F","b"],["A6-C3","c",["Bomber","Pickpocket"]],["A6F","b"],["A4-C3","c",["Imitator"]],["A4F","b"],["A1X","u"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1F","A7-C2"],["A7-C2P","A8S2"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2P","A7-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A7-C2F","A8S3"],["A2-C2F","A2F"],["A3-C2F","A3-C3"],["A3-C3F","A3F"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A7-C1P","A8S"],["A3-C3P","A4-C1"],["A5-C2F","A5F"],["A6-C2F","A6-C3"],["A6-C3P","A7-C1"],["A6-C3F","A6F"],["A4-C2F","A4-C3"],["A4-C3P","A5-C1"],["A4-C3F","A4F"],["A1-C3F","A1X"]],"w":{"Hijacker":25,"Imitator":25,"Bomber":18,"Pickpocket":17,"Engineer":15}},"manifestcruelty":{"v":"V1","name":"Manifest Cruelty","roles":{"reviver":"Reviver","interrogator":"Interrogator","hacker":"Hacker","catburglar":"CatBurglar"},"n":[["A1-C1","c",["Interrogator","CatBurglar"]],["A2-C1","c",["Interrogator"]],["A3-C1","c",["CatBurglar"]],["B4-C1","c",["Interrogator"]],["B5-C1","c",["Reviver"]],["B5-C2","c",["Reviver"]],["B6-C1","c",["Hacker","CatBurglar"]],["B7S","g"],["A4-C1","c",["Hacker"]],["B4-C2","c",["Reviver"]],["A1-C2","c",["Hacker","Reviver"]],["B4-C3","c",["Interrogator","Reviver"]],["B6-C2","c",["Hacker","CatBurglar"]],["A5-C1","c",["Reviver"]],["A5-C2","c",["Reviver"]],["A5F","b"],["A2-C2","c",["Interrogator"]],["A6-C1","c",["Hacker"]],["A7-C1","c",["Interrogator"]],["A8S","g"],["A6-C2","c",["CatBurglar"]],["A6-C3","c",["Hacker","CatBurglar"]],["A1-C3","c",["Hacker","Reviver"]],["A1F","b"],["B4F","b"],["A7-C2","c",["Interrogator","Reviver"]],["A7S","g"],["A2-C3","c",["Reviver"]],["A7F","b"],["A2F","b"],["B5F","b"],["B6F","b"],["A6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A3-C1F","B4-C1"],["B4-C1P","B5-C1"],["B5-C1F","B5-C2"],["B5-C2P","B6-C1"],["B6-C1P","B7S"],["A3-C1P","A4-C1"],["A4-C1F","B4-C1"],["B4-C1F","B4-C2"],["B4-C2P","B5-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["B4-C2F","B4-C3"],["B4-C3P","B5-C1"],["B5-C1P","B6-C1"],["B6-C1F","B6-C2"],["B6-C2P","B7S"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C2F","A5F"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A7-C1P","A8S"],["A6-C1F","A6-C2"],["A6-C2F","A6-C3"],["A6-C3P","A7-C1"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A1-C3F","A1F"],["B4-C3F","B4F"],["A6-C2P","A7-C1"],["A5-C2P","A6-C1"],["A7-C1F","A7-C2"],["A7-C2P","A7S"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A7-C2F","A7F"],["A2-C3F","A2F"],["B5-C2F","B5F"],["B6-C2F","B6F"],["A6-C3F","A6F"]],"w":{"Reviver":46,"Interrogator":24,"Hacker":16,"CatBurglar":14}},"windowofopportunity":{"v":"","name":"Window of Opportunity","roles":{"looter2":"Looter2","muscle1":"Muscle1","looter1":"Looter1","muscle2":"Muscle2","engineer":"Engineer"},"n":[["A1-C1","c",["Engineer"]],["A2-C1","c",["Muscle1","Muscle2"]],["A3-C1","c",["Looter1","Looter2"]],["A4-C1","c",["Engineer","Looter2"]],["A5-C1","c",["Looter1"]],["A6-C1","c",["Muscle1","Muscle2"]],["A7-C1","c",["Engineer","Muscle1"]],["A7-C2","c",["Muscle1","Muscle2"]],["A5-C2","c",["Looter1","Muscle1"]],["C6-C1","c",["Muscle1","Muscle2"]],["A4-C2","c",["Engineer","Looter2"]],["A1-C2","c",["Engineer"]],["A1-C3","c",["Engineer"]],["A2-C2","c",["Muscle1","Muscle2"]],["B5-C1","c",["Looter1"]],["B5-C2","c",["Looter1"]],["B6-C1","c",["Engineer","Looter2"]],["B7-C1","c",["Muscle1","Muscle2"]],["A3-C2","c",["Looter1","Looter2"]],["C6-C2","c",["Looter2"]],["A7-C3","c",["Looter2","Muscle1"]],["B7-C2","c",["Looter1","Looter2"]],["B6-C2","c",["Looter1","Looter2"]],["B6-C3","c",["Looter1","Looter2"]],["B7-C3","c",["Muscle1","Muscle2"]],["B5-C3","c",["Looter1"]],["A8S2","g"],["C6S","g"],["A8S","g"],["B8S","g"],["A8S3","g"],["B8S2","g"],["A1F","b"],["A2F","b"],["A3F","b"],["A7F","b"],["B7F","b"],["C6F","b"],["B5F","b"],["B6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A2-C1F","A2-C2"],["A3-C1P","A4-C1"],["A3-C1F","A3-C2"],["A4-C1P","A5-C1"],["A4-C1F","A4-C2"],["A5-C1P","A6-C1"],["A5-C1F","A5-C2"],["A5-C2P","A6-C1"],["A5-C2F","B5-C1"],["B5-C1F","B5-C2"],["B5-C1P","B6-C1"],["B5-C2F","B5-C3"],["B5-C2P","B6-C1"],["B6-C1P","B7-C1"],["B6-C1F","B6-C2"],["B7-C1P","B8S"],["B7-C1F","B7-C2"],["A3-C2F","A3F"],["A3-C2P","A4-C1"],["A6-C1P","A7-C1"],["A6-C1F","C6-C1"],["A7-C1F","A7-C2"],["A7-C1P","A8S"],["A7-C2P","A8S2"],["A7-C2F","A7-C3"],["C6-C1P","C6S"],["C6-C1F","C6-C2"],["A4-C2P","A5-C1"],["A4-C2F","B5-C1"],["C6-C2F","C6F"],["C6-C2P","C6S"],["A1-C2P","A2-C1"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A1-C3F","A1F"],["A2-C2F","A2F"],["A2-C2P","A3-C1"],["A7-C3F","A7F"],["A7-C3P","A8S3"],["B7-C2F","B7-C3"],["B7-C2P","B8S"],["B6-C2F","B6-C3"],["B6-C2P","B7-C3"],["B6-C3F","B6F"],["B6-C3P","B7-C3"],["B7-C3F","B7F"],["B7-C3P","B8S2"],["B5-C3P","B6-C1"],["B5-C3F","B5F"]],"w":{"Looter2":25,"Muscle1":23,"Looter1":20,"Muscle2":17,"Engineer":15}},"thoushaltnotsteal":{"v":"","name":"Thou Shalt Not Steal","roles":{"picklock":"Picklock","pickpocket":"Pickpocket","thief":"Thief"},"n":[["A1-C1","c",["Thief"]],["A1-C2","c",["Pickpocket"]],["A2-C1","c",["Pickpocket"]],["A3-C1","c",["Picklock"]],["A3-C2","c",["Picklock"]],["A4-C1","c",["Thief"]],["A5-C1","c",["Picklock"]],["A6-C1","c",["Pickpocket"]],["A6-C2","c",["Pickpocket"]],["A5-C2","c",["Thief","Picklock"]],["A5-C4","c",["Pickpocket"]],["A2-C2","c",["Pickpocket","Thief"]],["B3-C1","c",["Thief","Picklock"]],["B4-C1","c",["Picklock"]],["B4-C2","c",["Thief","Picklock"]],["A4-C2","c",["Thief"]],["A5-C3","c",["Thief"]],["A1-C3","c",["Picklock"]],["B5-C1","c",["Picklock","Thief"]],["B6-C1","c",["Pickpocket"]],["B5-C2","c",["Thief","Picklock"]],["A7S","g"],["A7S2","g"],["A6S","g"],["A5S","g"],["B7S","g"],["B7S2","g"],["B4F","b"],["A5F2","b"],["B3F","b"],["A2F","b"],["A5F","b"],["B5F","b"],["A1X","u"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C1P","A2-C1"],["A1-C2P","A2-C1"],["A1-C2F","A1-C3"],["A2-C1F","A2-C2"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A3-C1F","A3-C2"],["A3-C2F","B3-C1"],["A3-C2P","A4-C1"],["A4-C1F","A4-C2"],["A4-C1P","A5-C1"],["A5-C1F","A5-C2"],["A5-C1P","A6-C1"],["A6-C1P","A7S"],["A6-C1F","A6-C2"],["A6-C2F","A6S"],["A6-C2P","A7S2"],["A5-C2P","A5-C4"],["A5-C2F","A5-C3"],["A5-C4F","A5F2"],["A5-C4P","A5S"],["A2-C2F","A2F"],["A2-C2P","A3-C1"],["B3-C1F","B3F"],["B3-C1P","B4-C1"],["B4-C1F","B4-C2"],["B4-C1P","B5-C1"],["B4-C2F","B4F"],["B4-C2P","B5-C1"],["A4-C2F","B4-C1"],["A4-C2P","A5-C1"],["A5-C3F","A5F"],["A5-C3P","A5-C4"],["A1-C3P","A2-C1"],["B5-C1F","B5-C2"],["B5-C1P","B6-C1"],["B6-C1F","B7S2"],["B6-C1P","B7S"],["B5-C2P","B6-C1"],["B5-C2F","B5F"],["A1-C3F","A1X"]],"w":{"Picklock":50,"Pickpocket":38,"Thief":12}},"dishitout":{"v":"","name":"Dish It Out","roles":{"assassin":"Assassin","muscle":"Muscle","saboteur1":"Saboteur1","engineer":"Engineer","saboteur2":"Saboteur2"},"n":[["A1-C1","c",["Engineer"]],["A1-C2","c",["Engineer"]],["A2-C1","c",["Assassin"]],["A3-C1","c",["Saboteur1"]],["A3-C2","c",["Saboteur1"]],["B3-C1","c",["Saboteur1","Saboteur2"]],["B4-C1","c",["Assassin","Muscle"]],["B4-C2","c",["Muscle"]],["A4-C1","c",["Muscle"]],["A4-C2","c",["Assassin","Muscle"]],["A5-C1","c",["Saboteur2"]],["A6-C1","c",["Muscle"]],["A7-C1","c",["Engineer"]],["A2-C2","c",["Assassin"]],["B5-C1","c",["Saboteur1","Engineer"]],["B6-C1","c",["Muscle"]],["B6-C2","c",["Assassin","Muscle","Saboteur1","Saboteur2"]],["B5-C2","c",["Saboteur2","Engineer"]],["A6-C2","c",["Assassin","Muscle"]],["A7-C2","c",["Assassin","Muscle"]],["A7-C3","c",["Engineer"]],["B5-C3","c",["Saboteur2"]],["B3-C2","c",["Saboteur1","Saboteur2"]],["A1-C3","c",["Saboteur1","Engineer"]],["A8S","g"],["A8S2","g"],["A8S3","g"],["B7S2","g"],["B7S","g"],["B4F","b"],["B6F","b"],["B5F","b"],["B3F","b"],["A2F","b"],["A4F","b"],["A1X","u"],["A7X","u"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C2P","A2-C1"],["A2-C1F","A2-C2"],["A2-C1P","A3-C1"],["A3-C1P","A4-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A3-C2F","B3-C1"],["B3-C1P","B4-C1"],["B3-C1F","B3-C2"],["B4-C1P","B5-C1"],["B4-C1F","B4-C2"],["B4-C2F","B4F"],["B4-C2P","B5-C1"],["A4-C1P","A5-C1"],["A4-C1F","A4-C2"],["A4-C2F","A4F"],["A4-C2P","A5-C1"],["A5-C1P","A6-C1"],["A5-C1F","B5-C1"],["A6-C1F","A6-C2"],["A6-C1P","A7-C1"],["A7-C1P","A8S"],["A7-C1F","A7-C2"],["A2-C2P","A3-C1"],["A2-C2F","A2F"],["B5-C1P","B6-C1"],["B5-C1F","B5-C2"],["B6-C1P","B7S"],["B6-C1F","B6-C2"],["B6-C2F","B6F"],["B6-C2P","B7S2"],["B5-C2P","B6-C1"],["B5-C2F","B5-C3"],["A6-C2P","A7-C1"],["A6-C2F","B6-C1"],["A7-C2F","A7-C3"],["A7-C2P","A8S2"],["A7-C3P","A8S3"],["B5-C3F","B5F"],["B5-C3P","B6-C1"],["B3-C2P","B4-C1"],["B3-C2F","B3F"],["A1-C3P","A2-C1"],["A1-C3X","A1X"],["A7-C3X","A7X"]],"w":{"Assassin":37,"Muscle":25,"Saboteur1":15,"Engineer":14,"Saboteur2":9}},"honeytrap":{"v":"","name":"Honey Trap","roles":{"muscle2":"Muscle2","muscle1":"Muscle1","enforcer":"Enforcer"},"n":[["A1-C1","c",["Enforcer"]],["A1-C2","c",["Muscle1"]],["A1-C3","c",["Muscle2"]],["A2-C1","c",["Muscle1"]],["A2-C2","c",["Enforcer"]],["A2-C3","c",["Muscle2"]],["A3-C1","c",["Enforcer"]],["B1-C1","c",["Muscle2"]],["B2-C1","c",["Muscle1","Muscle2"]],["B2-C2","c",["Muscle2"]],["B2S","g"],["B1-C2","c",["Muscle2"]],["B2F","b"],["A4-C1","c",["Enforcer"]],["A4-C2","c",["Muscle1","Muscle2"]],["A5-C2","c",["Muscle1"]],["A6-C2","c",["Muscle2"]],["A6S","g"],["A5-C1","c",["Muscle2"]],["A6-C1","c",["Muscle1","Muscle2"]],["A7-C1","c",["Enforcer","Muscle1"]],["A8S","g"],["A5F","b"],["A7S","g"],["B1F","b"],["A4F","b"],["A2F","b"],["A1F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C2F","A1-C3"],["A1-C3P","A2-C1"],["A2-C1F","A2-C2"],["A2-C2F","A2-C3"],["A2-C3P","A3-C1"],["A3-C1F","B1-C1"],["B1-C1P","B2-C1"],["B2-C1F","B2-C2"],["B2-C2P","B2S"],["B2-C1P","B2S"],["A1-C2P","A2-C1"],["A2-C2P","A3-C1"],["B1-C1F","B1-C2"],["B1-C2P","B2-C1"],["B2-C2F","B2F"],["A3-C1P","A4-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C2"],["A5-C2P","A6-C2"],["A6-C2F","A6S"],["A1-C1P","A2-C1"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A6-C1F","A6-C2"],["A6-C2P","A7-C1"],["A7-C1P","A8S"],["A5-C2F","A5F"],["A5-C1F","A5-C2"],["A7-C1F","A7S"],["B1-C2F","B1F"],["A2-C1P","A3-C1"],["A6-C1P","A7-C1"],["A4-C2F","A4F"],["A2-C3F","A2F"],["A1-C3F","A1F"]],"w":{"Muscle2":42,"Muscle1":31,"Enforcer":27}},"pluckingthelotuspetal":{"v":"","name":"Plucking the Lotus Petal","roles":{"muscle":"Muscle","robber2":"Robber2","hustler":"Hustler","robber1":"Robber1"},"n":[["A1-C1","c",["Hustler"]],["A2-C1","c",["Muscle"]],["A3-C1","c",["Robber1"]],["A4-C1","c",["Robber2"]],["A4-C2","c",["Robber2"]],["A5-C1","c",["Hustler","Muscle"]],["A6-C1","c",["Muscle"]],["A7-C1","c",["Robber1","Robber2"]],["A2-C2","c",["Muscle"]],["C2-C1","c",["Muscle"]],["C3-C1","c",["Hustler"]],["C4-C1","c",["Muscle"]],["C4-C2","c",["Muscle"]],["C5-C1","c",["Robber1","Robber2"]],["C5-C2","c",["Muscle"]],["A6-C2","c",["Muscle"]],["A3-C2","c",["Robber1"]],["A5-C2","c",["Hustler"]],["C2-C2","c",["Muscle"]],["B6-C1","c",["Robber1","Robber2"]],["B7-C1","c",["Robber1","Robber2"]],["B7-C2","c",["Robber1","Robber2"]],["A3-C3","c",["Robber2","Robber1"]],["B6-C2","c",["Robber1","Robber2"]],["C3-C2","c",["Hustler"]],["A8S","g"],["A8S2","g"],["C6S","g"],["B8S","g"],["C4F","b"],["C2F","b"],["A4F","b"],["C3F","b"],["A2F","b"],["A3F","b"],["C5F","b"],["B7F","b"],["B6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A1-C1F","C2-C1"],["A2-C1P","A3-C1"],["A2-C1F","A2-C2"],["A3-C1F","A3-C2"],["A3-C1P","A4-C1"],["A4-C1P","A5-C1"],["A4-C1F","A4-C2"],["A4-C2P","A5-C1"],["A4-C2F","A4F"],["A5-C1F","A5-C2"],["A5-C1P","A6-C1"],["A6-C1P","A7-C1"],["A6-C1F","A6-C2"],["A7-C1P","A8S"],["A7-C1F","A8S2"],["A2-C2P","A3-C1"],["A2-C2F","A2F"],["C2-C1P","C3-C1"],["C2-C1F","C2-C2"],["C3-C1F","C3-C2"],["C3-C1P","C4-C1"],["C4-C1F","C4-C2"],["C4-C1P","C5-C1"],["C4-C2F","C4F"],["C4-C2P","C5-C1"],["C5-C1F","C5-C2"],["C5-C1P","C6S"],["C5-C2F","C5F"],["C5-C2P","C6S"],["A6-C2P","A7-C1"],["A6-C2F","B6-C1"],["A3-C2F","A3-C3"],["A3-C2P","A4-C1"],["A5-C2P","A6-C1"],["A5-C2F","B6-C1"],["C2-C2F","C2F"],["C2-C2P","C3-C1"],["B6-C1P","B7-C1"],["B6-C1F","B6-C2"],["B7-C1P","B8S"],["B7-C1F","B7-C2"],["B7-C2P","B8S"],["B7-C2F","B7F"],["A3-C3F","A3F"],["A3-C3P","A4-C1"],["B6-C2P","B7-C1"],["B6-C2F","B6F"],["C3-C2P","C4-C1"],["C3-C2F","C3F"]],"w":{"Muscle":48,"Robber2":24,"Hustler":14,"Robber1":14}},"lockstock":{"v":"","name":"Lock Stock","roles":{"assassin":"Assassin","smuggler":"Smuggler","hacker":"Hacker","muscle1":"Muscle1","muscle2":"Muscle2"},"n":[["A1-C1","c",["Muscle1","Muscle2"]],["A1-C2","c",["Muscle1","Muscle2"]],["A2-C1","c",["Assassin"]],["A3-C1","c",["Assassin"]],["A3-C2","c",["Assassin"]],["A4-C1","c",["Hacker"]],["A5-C1","c",["Muscle1","Muscle2"]],["A6-C1","c",["Smuggler"]],["A6-C2","c",["Smuggler"]],["A7-C1","c",["Hacker"]],["A2-C2","c",["Assassin"]],["A7-C2","c",["Hacker"]],["A5-C2","c",["Muscle1","Muscle2"]],["A5-C3","c",["Smuggler","Muscle1","Muscle2"]],["A7-C3","c",["Hacker","Smuggler"]],["A6-C3","c",["Smuggler","Muscle1","Muscle2"]],["A4-C2","c",["Hacker"]],["A1-C3","c",["Assassin"]],["A2-C3","c",["Assassin"]],["A3-C3","c",["Assassin"]],["A4-C3","c",["Hacker"]],["A8S","g"],["A8S2","g"],["A7F","b"],["A8S3","g"],["A6F","b"],["A3F","b"],["A4F","b"],["A2F","b"],["A3F2","b"],["A5F","b"],["A1X","u"]],"e":[["Prelude","A1-C1"],["A1-C1P","A2-C1"],["A1-C1F","A1-C2"],["A1-C2P","A2-C1"],["A1-C2F","A1-C3"],["A2-C1P","A3-C1"],["A2-C1F","A2-C2"],["A3-C1P","A4-C1"],["A3-C1F","A3-C2"],["A3-C2P","A4-C1"],["A3-C2F","A3F2"],["A4-C1F","A4-C2"],["A4-C1P","A5-C1"],["A5-C1P","A6-C1"],["A5-C1F","A5-C2"],["A6-C1P","A7-C1"],["A6-C1F","A6-C2"],["A6-C2P","A7-C1"],["A6-C2F","A6-C3"],["A7-C1F","A7-C2"],["A7-C1P","A8S"],["A2-C2F","A2-C3"],["A2-C2P","A3-C1"],["A7-C2P","A8S2"],["A7-C2F","A7-C3"],["A5-C2P","A6-C1"],["A5-C2F","A5-C3"],["A5-C3F","A5F"],["A5-C3P","A6-C1"],["A7-C3F","A7F"],["A7-C3P","A8S3"],["A6-C3P","A7-C3"],["A6-C3F","A6F"],["A4-C2F","A4-C3"],["A4-C2P","A5-C1"],["A1-C3P","A2-C1"],["A2-C3P","A3-C3"],["A2-C3F","A2F"],["A3-C3P","A4-C1"],["A3-C3F","A3F"],["A4-C3P","A5-C1"],["A4-C3F","A4F"],["A1-C3X","A1X"]],"w":{"Assassin":38,"Smuggler":25,"Hacker":15,"Muscle1":11,"Muscle2":11}},"hostiletakeover":{"v":"","name":"Hostile Takeover","roles":{"negotiator":"Negotiator","engineer":"Engineer","catburglar":"CatBurglar","muscle":"Muscle","kidnapper":"Kidnapper","hacker":"Hacker"},"n":[["A1-C1","c",["Muscle"]],["A2-C1","c",["Kidnapper","Negotiator"]],["A2-C2","c",["Negotiator"]],["A3-C1","c",["CatBurglar","Engineer"]],["A4-C1","c",["Engineer"]],["B4-C1","c",["CatBurglar"]],["B4-C2","c",["CatBurglar"]],["A1-C2","c",["Negotiator"]],["A1-C3","c",["Kidnapper","Negotiator","Muscle"]],["A5-C1","c",["Hacker"]],["A6-C1","c",["Negotiator"]],["A7-C1","c",["Kidnapper","Negotiator"]],["B5-C1","c",["Hacker"]],["B6-C1","c",["Kidnapper"]],["B6-C2","c",["Negotiator","Kidnapper"]],["B7-C1","c",["Negotiator","Muscle"]],["B7-C2","c",["CatBurglar","Muscle"]],["B5-C2","c",["Hacker"]],["A6-C2","c",["Negotiator"]],["A5-C3","c",["Engineer","Hacker"]],["A7-C2","c",["Muscle"]],["A2-C3","c",["Muscle"]],["A6-C3","c",["Negotiator","Muscle"]],["A7-C3","c",["CatBurglar","Muscle"]],["A8S","g"],["A8S3","g"],["A8S2","g"],["B8S","g"],["B8S2","g"],["B4F","b"],["B6F","b"],["A1F","b"],["B7F","b"],["B5F","b"],["A5F","b"],["A7F","b"],["A2F","b"],["A6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A2-C2F","A2-C3"],["A3-C1F","B4-C1"],["A3-C1P","A4-C1"],["A4-C1F","B4-C1"],["A4-C1P","A5-C1"],["B4-C1P","B5-C1"],["B4-C1F","B4-C2"],["B4-C2F","B4F"],["B4-C2P","B5-C1"],["A1-C2F","A1-C3"],["A1-C2P","A2-C1"],["A1-C3P","A2-C1"],["A1-C3F","A1F"],["A5-C1P","A6-C1"],["A5-C1F","A5-C2"],["A6-C1P","A7-C1"],["A6-C1F","A6-C2"],["A7-C1F","A7-C2"],["A7-C1P","A8S"],["B5-C1F","B5-C2"],["B5-C1P","B6-C1"],["B6-C1P","B7-C1"],["B6-C1F","B6-C2"],["B6-C2P","B7-C1"],["B6-C2F","B6F"],["B7-C1F","B7-C2"],["B7-C1P","B8S"],["B7-C2F","B7F"],["B7-C2P","B8S2"],["B5-C2P","B6-C1"],["B5-C2F","B5F"],["A6-C2F","A6-C3"],["A6-C2P","A7-C1"],["A5-C2F","A5-C3"],["A5-C2P","A6-C1"],["A5-C3F","A5F"],["A5-C3P","A6-C1"],["A7-C2F","A7-C3"],["A7-C2P","A8S2"],["A2-C3P","A3-C1"],["A2-C3F","A2F"],["A6-C3F","A6F"],["A6-C3P","A7-C1"],["A7-C3P","A8S3"],["A7-C3F","A7F"]],"w":{"Negotiator":25,"Engineer":20,"CatBurglar":17,"Muscle":15,"Kidnapper":13,"Hacker":10}},"clearedfortakeoff":{"v":"","name":"Cleared for Takeoff","roles":{"interrogator":"Interrogator","imitator":"Imitator","assassin":"Assassin","pickpocket":"Pickpocket","techie":"Techie","lookout":"Lookout"},"n":[["A1-C1","c",["Lookout","Pickpocket"]],["A2-C1","c",["Imitator","Techie"]],["A2-C2","c",["Imitator"]],["A3-C1","c",["Imitator","Techie"]],["A4-C1","c",["Imitator","Pickpocket"]],["B4-C1","c",["Assassin"]],["B5-C1","c",["Interrogator"]],["B6-C1","c",["Pickpocket"]],["B7-C1","c",["Techie","Interrogator"]],["A1-C2","c",["Lookout","Pickpocket"]],["B5-C2","c",["Interrogator"]],["A3-C2","c",["Imitator","Techie","Lookout"]],["A3-C3","c",["Imitator","Lookout"]],["A1-C3","c",["Assassin"]],["A2-C3","c",["Interrogator"]],["A5-C1","c",["Assassin"]],["A6-C1","c",["Interrogator"]],["A6-C2","c",["Assassin"]],["A7-C2","c",["Interrogator","Techie","Assassin"]],["A7-C3","c",["Imitator","Interrogator"]],["A5-C2","c",["Assassin"]],["A7-C1","c",["Techie"]],["B4-C2","c",["Assassin","Interrogator"]],["A5-C3","c",["Interrogator"]],["B7-C2","c",["Imitator"]],["B6-C2","c",["Lookout","Assassin","Pickpocket"]],["A8S","g"],["A8S2","g"],["A8S3","g"],["B8S","g"],["B8S2","g"],["B5F","b"],["A3F","b"],["A1F","b"],["A2F","b"],["A5F","b"],["B4F","b"],["A7F","b"],["B7F","b"],["B6F","b"]],"e":[["Prelude","A1-C1"],["A1-C1F","A1-C2"],["A1-C1P","A2-C1"],["A2-C1P","A3-C1"],["A2-C1F","A2-C2"],["A2-C2P","A3-C1"],["A2-C2F","A2-C3"],["A3-C1P","A4-C1"],["A3-C1F","A3-C2"],["A4-C1F","B4-C1"],["A4-C1P","A5-C1"],["B4-C1P","B5-C1"],["B4-C1F","B4-C2"],["B5-C1P","B6-C1"],["B5-C1F","B5-C2"],["B6-C1F","B6-C2"],["B6-C1P","B7-C1"],["B7-C1P","B8S"],["B7-C1F","B7-C2"],["A1-C2P","A2-C1"],["A1-C2F","A1-C3"],["B5-C2P","B6-C1"],["B5-C2F","B5F"],["A3-C2P","A4-C1"],["A3-C2F","A3-C3"],["A3-C3P","B4-C1"],["A3-C3F","A3F"],["A1-C3F","A1F"],["A1-C3P","A2-C1"],["A2-C3P","A3-C1"],["A2-C3F","A2F"],["A5-C1P","A6-C1"],["A5-C1F","A5-C2"],["A6-C1F","A6-C2"],["A6-C1P","A7-C1"],["A6-C2F","A7-C3"],["A6-C2P","A7-C2"],["A7-C2P","A8S2"],["A7-C2F","A7-C3"],["A7-C3F","A7F"],["A7-C3P","A8S3"],["A5-C2F","A5-C3"],["A5-C2P","A6-C1"],["A7-C1F","A7-C2"],["A7-C1P","A8S"],["B4-C2P","B5-C1"],["B4-C2F","B4F"],["A5-C3P","A6-C1"],["A5-C3F","A5F"],["B7-C2F","B7F"],["B7-C2P","B8S2"],["B6-C2F","B6F"],["B6-C2P","B7-C1"]],"w":{"Interrogator":25,"Imitator":25,"Assassin":18,"Pickpocket":12,"Techie":11,"Lookout":9}}};
+
+  // Safe GM storage wrappers (TornPDA / managers that lack GM_* fall back to localStorage)
+  function gmGet(key, def) {
+    try {
+      if (typeof GM_getValue === "function") return GM_getValue(key, def);
+    } catch (e) { /* fall through */ }
+    try {
+      const raw = localStorage.getItem("tt2p_gm_" + key);
+      return raw === null ? def : JSON.parse(raw);
+    } catch (e) { return def; }
+  }
+  function gmSet(key, val) {
+    try {
+      if (typeof GM_setValue === "function") return GM_setValue(key, val);
+    } catch (e) { /* fall through */ }
+    try { localStorage.setItem("tt2p_gm_" + key, JSON.stringify(val)); } catch (e) { /* quota */ }
+  }
+
+  let crimesHubData = BUILTIN_CRIMESHUB_DATA;
+  let crimesHubSource = 'built-in (2026-10-03)';
+
+  const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const get = (url) => new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: 'GET', url, timeout: 30000,
+      onload: (r) => (r.status >= 200 && r.status < 300 ? resolve(r.responseText) : reject(new Error(r.status + ' ' + url))),
+      onerror: () => reject(new Error('network error ' + url)),
+      ontimeout: () => reject(new Error('timeout ' + url)),
+    });
+  });
+
+  function braceBlock(s, i) {
+    let depth = 0;
+    for (let j = i; j < s.length; j++) {
+      if (s[j] === '{') depth++;
+      else if (s[j] === '}' && --depth === 0) return s.slice(i, j + 1);
+    }
+    return null;
+  }
+
+  function parseBundle(js) {
+    const crimes = [];
+    const re = /super\.setName\("((?:[^"\\]|\\.)*)"\),super\.setRoles\(/g;
+    let m;
+    while ((m = re.exec(js))) {
+      const name = JSON.parse('"' + m[1].replace(/\\x([0-9a-fA-F]{2})/g, '\\u00$1') + '"');
+      const rolesJs = braceBlock(js, re.lastIndex);
+      if (!rolesJs) continue;
+      const roles = {}, w = {};
+      const roleRe = /([A-Za-z0-9_]+):\{name:"([^"]+)"/g;
+      let r;
+      while ((r = roleRe.exec(rolesJs))) {
+        roles[norm(r[2])] = r[1];
+        const weight = /weight:(\d+(?:\.\d+)?)/.exec(braceBlock(rolesJs, r.index + r[1].length + 1) || '');
+        if (weight) w[r[1]] = parseFloat(weight[1]);
+      }
+      const rest = js.slice(re.lastIndex + rolesJs.length, re.lastIndex + rolesJs.length + 6000);
+      const head = rest.slice(0, rest.indexOf('static'));
+      const ver = /version:\{name:"([^"]+)"/.exec(head);
+      const usesVersion = /super\.loadNodes\(this\.name,i\.version\?\.name\)/.test(head);
+      crimes.push({ name, roles, w, v: ver && usesVersion ? ver[1] : '' });
+    }
+    return crimes;
+  }
+
+  async function fetchLive() {
+    const html = await get(CRIMESHUB_SITE);
+    const main = /src="(main-[A-Za-z0-9]+\.js)"/.exec(html);
+    if (!main) throw new Error('main bundle not found');
+    const crimes = parseBundle(await get(CRIMESHUB_SITE + main[1]));
+    if (!crimes.length) throw new Error('no crimes found in bundle');
+
+    const latest = {};
+    for (const c of crimes) {
+      const key = norm(c.name);
+      if (!latest[key] || latest[key].v < c.v) latest[key] = c;
+    }
+
+    const out = {};
+    await Promise.all(Object.entries(latest).map(async ([key, c]) => {
+      const base = CRIMESHUB_SITE + 'assets/json/' + encodeURIComponent(c.name.replace(/\s/g, '').toLowerCase() + c.v.toLowerCase());
+      try {
+        const [checks, paths] = await Promise.all([get(base + '_checks.json'), get(base + '_paths.json')].map((p) => p.then(JSON.parse)));
+        out[key] = {
+          v: c.v, name: c.name, roles: c.roles, w: c.w,
+          n: checks.filter((x) => x.type !== 'start').map((x) => (x.type === 'check'
+            ? [x.id, 'c', x.data.roles]
+            : [x.id, x.type === 'ending' ? (x.data.text[0] === 'G' ? 'g' : 'b') : 'u'])),
+          e: paths.map((x) => [x.id, x.target]),
+        };
+      } catch (err) {
+        console.warn('[OC Success] skipped', c.name, err.message);
+      }
+    }));
+    if (!Object.keys(out).length) throw new Error('no crime data downloaded');
+    return out;
+  }
+
+  let crimesHubInFlight = false;
+  let crimesHubCheckedAt = 0;
+  const CRIMESHUB_RETRY_MS = 10 * 60 * 1000;
+
+  async function loadCrimesHubData() {
+    // Avoid re-reading/re-fetching every time the user flicks between tabs
+    if (crimesHubInFlight) return;
+    if (Date.now() - crimesHubCheckedAt < CRIMESHUB_RETRY_MS) return;
+    crimesHubInFlight = true;
+    crimesHubCheckedAt = Date.now();
+    try {
+      await loadCrimesHubDataInner();
+    } finally {
+      crimesHubInFlight = false;
+    }
+  }
+
+  async function loadCrimesHubDataInner() {
+    const cached = gmGet(CRIMESHUB_CACHE_KEY, null);
+    if (cached && cached.data) {
+      crimesHubData = Object.assign({}, BUILTIN_CRIMESHUB_DATA, cached.data);
+      crimesHubSource = 'CrimesHub, ' + new Date(cached.at).toLocaleString();
+      runPass();
+      if (Date.now() - cached.at < CRIMESHUB_REFRESH_MS) return;
+    }
+    try {
+      const data = await fetchLive();
+      const at = Date.now();
+      gmSet(CRIMESHUB_CACHE_KEY, { at, data });
+      crimesHubData = Object.assign({}, BUILTIN_CRIMESHUB_DATA, data);
+      crimesHubSource = 'CrimesHub, ' + new Date(at).toLocaleString();
+      console.info('[OC Success] loaded', Object.keys(data).length, 'crimes from CrimesHub');
+    } catch (err) {
+      console.warn('[OC Success] live CrimesHub data unavailable, using', crimesHubSource, err);
+    }
+    runPass();
+  }
+
+  function simulate(crime, passRates) {
+    const map = {};
+    for (const [id, t, roles] of crime.n) map[id] = { t, roles, sources: [] };
+    for (const [eid, target] of crime.e) if (map[target]) map[target].sources.push(eid);
+    const done = {};
+    const resolve = (id) => {
+      const a = map[id];
+      if (!a || done[id]) return a;
+      done[id] = true;
+      if (a.roles) {
+        a.s = a.roles.reduce((sum, r) => sum + (passRates[r] ?? 0), 0) / (100 * a.roles.length);
+      }
+      if (id === 'A1-C1') a.occ = 1;
+      else {
+        a.occ = 0;
+        for (const c of a.sources) {
+          const src = resolve(c.slice(0, -1));
+          if (src) a.occ += (c.slice(-1) === 'P' ? src.s : 1 - src.s) * src.occ;
+        }
+      }
+      return a;
+    };
+    let success = 0;
+    for (const id in map) {
+      resolve(id);
+      if (map[id].t === 'g') success += map[id].occ;
+    }
+    return success;
+  }
+
+  function processSuccessBadge(cardEl, info) {
+    const levelEl = cardEl.querySelector('[class^="textLevel"], [class*=" textLevel"], [class*="textLevel__"]');
+    if (!levelEl) return;
+
+    const crime = crimesHubData[norm(info.crimeName)];
+    let label = 'n/a', tip = 'Crime not in CrimesHub data';
+    if (crime) {
+      const rates = {};
+      const missing = [];
+      info.slots.forEach((slot) => {
+        if (!slot.roleName) return;
+        const roleKey = crime.roles ? crime.roles[norm(slot.roleName)] : null;
+        const val = slot.chance;
+        if (!roleKey) missing.push(slot.roleName + ' (unknown role)');
+        else if (val === null || isNaN(val)) missing.push(slot.roleName);
+        else rates[roleKey] = val;
+      });
+
+      if (missing.length) {
+        label = '?';
+        tip = 'No success chance for: ' + missing.join(', ');
+      } else {
+        label = (simulate(crime, rates) * 100).toFixed(2) + '%';
+        tip = 'Simulated success chance, ' + crime.name + (crime.v ? ' ' + crime.v : '') + ' (data: ' + crimesHubSource + ')';
+      }
+    }
+
+    const existingBadges = cardEl.querySelectorAll('.tt2p-oc-success');
+    let badge = existingBadges[0];
+    for (let i = 1; i < existingBadges.length; i++) {
+      existingBadges[i].remove();
+    }
+
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tt2p-oc-success';
+      badge.style.cssText = 'margin-right:8px;font-weight:700;color:#5ad06e;white-space:nowrap;font-size:11px;display:inline-block;vertical-align:middle;';
+      levelEl.insertBefore(badge, levelEl.firstChild);
+    }
+    if (badge.textContent !== label) badge.textContent = label;
+    if (badge.title !== tip) badge.title = tip;
+  }
+
+  function injectTidyWeightBox(slot, crimeName) {
+    if (!slot.wrapperEl) return;
+
+    let weight = undefined;
+    const weightMap = ROLE_WEIGHTS[crimeName];
+    if (weightMap && slot.roleName) {
+      weight = normalizeLookup(weightMap, slot.roleName);
+    }
+    if (weight === undefined && crimesHubData[norm(crimeName)]) {
+      const crime = crimesHubData[norm(crimeName)];
+      if (crime.roles && crime.w) {
+        const rKey = crime.roles[norm(slot.roleName)];
+        if (rKey && crime.w[rKey] !== undefined) {
+          weight = crime.w[rKey];
+        }
+      }
+    }
+
+    const slotHeader = slot.wrapperEl.querySelector('button[class*="slotHeader__"]');
+    if (!slotHeader) return;
+
+    const existingRows = slot.wrapperEl.querySelectorAll('.tt2p-tidy-weight');
+    let row = existingRows[0];
+    for (let i = 1; i < existingRows.length; i++) {
+      existingRows[i].remove();
+    }
+
+    if (weight === undefined) {
+      if (row) row.remove();
+      return;
+    }
+
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'tt2p-tidy-weight';
+      row.style.cssText = 'text-align:center;font-size:12px;padding:3px 0;box-sizing:border-box;font-family:\'Inter\',sans-serif;font-weight:400;';
+      slotHeader.parentNode.insertBefore(row, slotHeader.nextSibling);
+    }
+
+    const text = `Weight: ${weight.toFixed(1)}%`;
+    if (row.textContent !== text) row.textContent = text;
+
+    const lookKey = slotHeader.className + "|" + slot.wrapperEl.className;
+    if (row.dataset.tt2pLookKey === lookKey) return;
+    row.dataset.tt2pLookKey = lookKey;
+
+    let el = slotHeader, cs = getComputedStyle(el);
+    while (el.parentElement && cs.backgroundImage === 'none' && /rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor)) {
+      el = el.parentElement;
+      cs = getComputedStyle(el);
+    }
+    const hs = getComputedStyle(slotHeader);
+    const look = {
+      backgroundColor: cs.backgroundColor,
+      backgroundImage: cs.backgroundImage,
+      color: hs.color
+    };
+    const line = (side) => hs[side + 'Width'] !== '0px' && hs[side + 'Style'] !== 'none'
+      ? hs[side + 'Width'] + ' ' + hs[side + 'Style'] + ' ' + hs[side + 'Color'] : '';
+    const bottom = line('borderBottom') || line('borderTop') || '1px solid rgba(128,128,128,.35)';
+    Object.assign(look, {
+      borderLeft: line('borderLeft'),
+      borderRight: line('borderRight'),
+      borderTop: '',
+      borderBottom: bottom
+    });
+    for (const k in look) {
+      if (row.style[k] !== look[k]) row.style[k] = look[k];
+    }
+  }
+
+  /* ============================================================================
    * CONFIG — edit this section to add/adjust crimes, CPR requirements, and
    * role weights.
-   *
-   * CPR_REQUIREMENTS: key = exact OC scenario name shown in the panel title.
-   *   value = { "Role Name": minimumCPR }. Any crime NOT listed here is treated
-   *   as "not run by the faction" and sinks to the bottom section.
-   *
-   * ROLE_WEIGHTS: same shape, independent of CPR_REQUIREMENTS — this is just
-   *   "how much this role affects overall success chance", shown as an
-   *   informational box under every role regardless of whether the crime is
-   *   tracked/qualified. Add crimes here as you find their weight numbers, and
-   *   adjust if Torn repatches the underlying probabilities.
    * ============================================================================ */
   const CPR_REQUIREMENTS = {
     "Pet Project": { "Kidnapper": 70, "Muscle": 70, "Picklock": 70 },
@@ -92,68 +378,37 @@
     "Ship Happens": {
       "Assassin": 70, "Engineer": 70, "Hustler": 70, "Interrogator": 70, "Spy": 70,
     },
-      "Cleared for Takeoff": {
+    "Cleared for Takeoff": {
       "Interrogator": 75, "Assassin": 75, "Imitator": 75, "Lookout": 75, "Pickpocket": 75, "Techie": 75,
     },
   };
 
-  // Role importance / weight-to-success-chance, shown under every role
-  // regardless of whether the crime is one we track requirements for.
-  // Fill in more crimes here as you gather the numbers.
   const ROLE_WEIGHTS = {
     "Snow Blind": { "Muscle #1": 8.5, "Hustler": 48.4, "Imitator": 34.6, "Muscle #2": 8.5 },
-
     "Window of Opportunity": { "Looter #2": 25, "Muscle #1": 23, "Looter #1": 20, "Muscle #2": 17, "Engineer": 15 },
-    
     "Blast from the Past": {
       "Picklock #1": 10.8, "Muscle": 34.6, "Hacker": 12.1,
       "Bomber": 15.6, "Picklock #2": 2.9, "Engineer": 24.0,
     },
-
     "Cleared for Takeoff": { "Interrogator": 25, "Imitator": 25, "Assassin": 18, "Pickpocket": 12, "Techie": 11, "Lookout": 9 },
-    
     "Clinical Precision": { "Imitator": 43.3, "Cleaner": 21.7, "Assassin": 16.1, "Cat Burglar": 18.9 },
-    
     "Break the Bank": {
       "Muscle #1": 13.5, "Muscle #2": 10.1, "Muscle #3": 31.7,
       "Robber": 12.7, "Thief #1": 2.9, "Thief #2": 29.1,
     },
-    
     "Lock Stock": { "Assassin": 38.6, "Muscle #2": 10.6, "Hacker": 15.3, "Muscle #1": 10.6, "Smuggler": 24.9 },
-    
     "Stacking the Deck": { "Cat Burglar": 23.4, "Driver": 3.0, "Hacker": 25.4, "Imitator": 48.2 },
-    
     "Ace in the Hole": { "Driver": 7.6, "Hacker": 28.3, "Imitator": 21.1, "Muscle #1": 18.3, "Muscle #2": 24.7 },
-
-    "Hostile Takeover": { "Negotiator": 25, "Engineer": 20, "Hacker": 10, "Kidnapper": 13, "Muscle": 15, "Cat Burglar":17 },
+    "Hostile Takeover": { "Negotiator": 25, "Engineer": 20, "Hacker": 10, "Kidnapper": 13, "Muscle": 15, "Cat Burglar": 17 },
   };
 
-  // How many points below the listed requirement we'll still call a "pass".
-  // Set to 0 for now — strict minimums only, no flex. Bump back up if you
-  // want the soft margin again later.
   const LENIENCY = 0;
-
-  // Crowding: counts occupied roles that are IDLE (planning clock at 0%,
-  // i.e. someone joined but hasn't started progressing) — not just any
-  // occupied role. A role already at 100% isn't blocking anyone. If an OC
-  // has this many people parked at 0% and still has open slots, we treat it
-  // as "busy" and rank it below equally-difficult, less-crowded options —
-  // never hidden, just deprioritized.
-  const CROWDING_IDLE_THRESHOLD = 2; // 0,1,2 idle = fine (24-48h wait); 3+ = busy
-
-  // How close to stalling (hours) counts as "urgent" for sort/wording
-  // purposes. Shared by the stall-row verdict text and the sort buckets
-  // below so they stay consistent with each other.
+  const CROWDING_IDLE_THRESHOLD = 2;
   const NEAR_STALL_THRESHOLD_HOURS = 24;
 
-  // Explicit ranking to break ties between different crimes that share the
-  // same difficulty number (e.g. Blast from the Past vs Window of
-  // Opportunity are both Level 7, but the faction ranks BftP above WoO).
-  // Anything not listed here falls back to a low priority (still sorts
-  // after everything named, difficulty being equal).
   const CRIME_IMPORTANCE_ORDER = [
     "Hostile Takeover", "Ace in the Hole",
-    "Break the Bank", "Ship Happens" ,"Lock Stock", "Stacking the Deck", "Clinical Precision", "Cleared for Takeoff",
+    "Break the Bank", "Ship Happens", "Lock Stock", "Stacking the Deck", "Clinical Precision", "Cleared for Takeoff",
     "Blast from the Past", "Window of Opportunity",
   ];
   function crimeImportanceIndex(crimeName) {
@@ -161,15 +416,8 @@
     return i === -1 ? CRIME_IMPORTANCE_ORDER.length : i;
   }
 
-  // How long (ms) to wait after DOM activity settles before re-scanning.
-  const SCAN_DEBOUNCE_MS = 1500;
-
-  // How long (ms) an "updated CPR" toast stays on screen.
+  const SCAN_DEBOUNCE_MS = 400;
   const TOAST_DURATION_MS = 6000;
-
-  // Crimes the faction never runs, hidden by default so nobody accidentally
-  // spawns/joins one — "out of sight, out of mind." Toggle-able per-member
-  // in the gear panel (Show hidden OCs). Add more crime names here as needed.
   const HIDDEN_CRIMES_BY_DEFAULT = ["Manifest Cruelty"];
 
   const STORAGE_KEY = "tornOC_prioritizer_cprData_v1";
@@ -177,12 +425,10 @@
   const MAX_DIFFICULTY_KEY = "tornOC_prioritizer_maxDifficulty_v1";
   const SORT_TOGGLE_KEY = "tornOC_prioritizer_dynamicSortEnabled_v1";
   const SHOW_HIDDEN_KEY = "tornOC_prioritizer_showHiddenOcs_v1";
+  const HIDE_FLAVOR_KEY = "tornOC_prioritizer_hideFlavorText_v1";
   const NOT_QUALIFIED_HEADER_ID = "tt2p-not-qualified-divider";
-  const DEFAULT_MAX_DIFFICULTY = 10; // no cap unless a member's setting says otherwise
+  const DEFAULT_MAX_DIFFICULTY = 10;
 
-  // Per-member settings (per-browser, editable via the gear panel). These are
-  // intentionally NOT centrally managed — each member's own browser decides
-  // its own cap/toggle state, same as the CPR data.
   let maxDifficultyLevel = (() => {
     const stored = parseInt(localStorage.getItem(MAX_DIFFICULTY_KEY), 10);
     return Number.isFinite(stored) && stored >= 1 && stored <= 10 ? stored : DEFAULT_MAX_DIFFICULTY;
@@ -190,22 +436,9 @@
 
   let dynamicSortEnabled = localStorage.getItem(SORT_TOGGLE_KEY) !== "0";
   let showHiddenOcs = localStorage.getItem(SHOW_HIDDEN_KEY) === "1";
-
-  // Tracks, per browser session only (resets on page reload — not persisted
-  // to localStorage), whether we've ever seen a LIVE planning clock (the
-  // conic-gradient icon, at any %) for a given crime+role. Needed because
-  // Torn renders the exact same static "inactive" icon for two very
-  // different situations: a role that's genuinely 100% complete, and a role
-  // whose occupant is missing a required item and has never started at all.
-  // If we've watched that role actually tick at some point, "inactive" now
-  // means complete. If we've never once seen it tick, "inactive" almost
-  // certainly means blocked. See classifyOccupantPlanning() below.
+  let hideFlavorText = localStorage.getItem(HIDE_FLAVOR_KEY) === "1";
   const slotProgressHistory = {};
 
-  /* ============================================================================
-   * Storage helpers — everything lives in localStorage on this machine only.
-   * Nothing here is transmitted anywhere.
-   * ============================================================================ */
   function loadStore() {
     try {
       return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -219,11 +452,6 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   }
 
-  // Remembers each crime's difficulty level (1–10) the last time it was
-  // actually seen live on screen — persists across sessions, since a crime
-  // that isn't currently spawned can't have its level read from the DOM.
-  // Used purely to sort the settings panels; doesn't affect qualification or
-  // priority sort logic elsewhere.
   function loadCrimeDifficultyCache() {
     try {
       return JSON.parse(localStorage.getItem(CRIME_DIFFICULTY_CACHE_KEY) || "{}");
@@ -239,9 +467,6 @@
     localStorage.setItem(CRIME_DIFFICULTY_CACHE_KEY, JSON.stringify(crimeDifficultyCache));
   }
 
-  // Sorts crime names hardest-first using the cached difficulty (falls back
-  // to CRIME_IMPORTANCE_ORDER's position, then alphabetical, for anything
-  // we've genuinely never seen live yet).
   function sortCrimeNamesByDifficulty(names) {
     return [...names].sort((a, b) => {
       const da = crimeDifficultyCache[a];
@@ -256,8 +481,6 @@
     });
   }
 
-  // Sorts a crime's role names by impact weight descending (falls back to
-  // alphabetical for roles with no weight on file).
   function sortRoleNamesByWeight(crimeName, roleNames) {
     const weightMap = ROLE_WEIGHTS[crimeName];
     return [...roleNames].sort((a, b) => {
@@ -270,9 +493,6 @@
     });
   }
 
-  // Records a new personal-best CPR and appends it to that role's growth
-  // history (only on genuine increases, not every page view — keeps the log
-  // compact since it's just recording real growth events, not noise).
   function recordCpr(store, crimeName, roleName, value) {
     if (!store[crimeName]) store[crimeName] = {};
     const existing = store[crimeName][roleName];
@@ -287,8 +507,6 @@
   }
 
   const LEVEL9_CRIMES = ["Hostile Takeover", "Ace in the Hole"];
-
-  // Growth History tab range filters.
   const GROWTH_RANGE_OPTIONS = [
     { label: "Lifetime", days: null },
     { label: "Last 3 Months", days: 90 },
@@ -297,13 +515,6 @@
     { label: "Last 2 Weeks", days: 14 },
   ];
 
-  // Checks the member's STORED CPR history (not just what's currently open
-  // on screen — Level 9 crimes might not even be spawned right now) against
-  // the Level 9 requirements. If any tracked Level 9 role has ever been
-  // observed meeting its requirement, this member is treated as "Level 9
-  // capable" for sort-priority purposes. Ace in the Hole falls out of this
-  // automatically once its CPR requirements are added to the config — no
-  // code change needed then.
   function computeLevel9Capable() {
     const store = loadStore();
     for (const crime of LEVEL9_CRIMES) {
@@ -318,9 +529,6 @@
     return false;
   }
 
-  /* ============================================================================
-   * Toast notifications
-   * ============================================================================ */
   function ensureToastContainer() {
     let el = document.getElementById("tt2p-toast-container");
     if (!el) {
@@ -345,11 +553,6 @@
     }, TOAST_DURATION_MS);
   }
 
-  /* ============================================================================
-   * Custom tooltip (own implementation — Torn's own hover tooltip content isn't
-   * something we can safely inject into, and the disabled Join buttons block
-   * native title-attribute tooltips via pointer-events:none anyway).
-   * ============================================================================ */
   function ensureCustomTooltip() {
     let el = document.getElementById("tt2p-tooltip");
     if (!el) {
@@ -364,13 +567,13 @@
     let occupantRow = "";
     if (slot.hasOccupant) {
       if (slot.planningState === "idle") {
-        occupantRow = `<div class="tt2p-tt-row tt2p-tt-idle">\u23F3 Joined, but not yet planning (0%)</div>`;
+        occupantRow = `<div class="tt2p-tt-row tt2p-tt-idle">⏳ Joined, but not yet planning (0%)</div>`;
       } else if (slot.planningState === "in_progress") {
         occupantRow = `<div class="tt2p-tt-row">Planning progress: <b>${slot.planningPct.toFixed(1)}%</b></div>`;
       } else if (slot.planningState === "blocked") {
-        occupantRow = `<div class="tt2p-tt-row tt2p-tt-idle">\u26A0\uFE0F No planning progress seen \u2014 possibly missing a required item</div>`;
+        occupantRow = `<div class="tt2p-tt-row tt2p-tt-idle">⚠️ No planning progress seen — missing required item</div>`;
       } else {
-        occupantRow = `<div class="tt2p-tt-row">Planning complete (100%) \u2014 waiting on other roles</div>`;
+        occupantRow = `<div class="tt2p-tt-row">Planning complete (100%) — waiting on other roles</div>`;
       }
     }
 
@@ -385,22 +588,23 @@
         <div class="tt2p-tt-row">No CPR requirement configured for this role</div>`;
     }
     const chanceText = slot.chance === null || Number.isNaN(slot.chance) ? "unknown" : slot.chance;
-    let statusHtml = "";
+
+    let statusIcon = "";
     if (slot.qualifies === true) {
-      statusHtml = `<div class="tt2p-tt-row tt2p-tt-pass">\u2705 PASS</div>`;
+      statusIcon = ` <span class="tt2p-tt-pass">✓</span>`;
     } else if (slot.qualifies === false) {
-      const short = Math.max(0, (slot.requirement - LENIENCY) - slot.chance);
-      statusHtml = `<div class="tt2p-tt-row tt2p-tt-fail">\u274C FAIL (needs +${short})</div>`;
+      statusIcon = ` <span class="tt2p-tt-fail">✕</span>`;
     }
+
     const starHtml = slot.starRank !== undefined
       ? `<div class="tt2p-tt-row tt2p-tt-pass">${STAR_ICONS[slot.starRank]} ${STAR_LABELS[slot.starRank]} choice for you right now</div>`
       : "";
+
     return `
       <div class="tt2p-tt-title">${escapeHtml(slot.roleName)}</div>
       ${occupantRow}
-      <div class="tt2p-tt-row">Current CPR Requirement: <b>${slot.requirement}</b>${LENIENCY > 0 ? ` (\u2212${LENIENCY} flex allowed)` : ""}</div>
-      <div class="tt2p-tt-row">Your CPR: <b>${chanceText}</b></div>
-      ${statusHtml}
+      <div class="tt2p-tt-row">Current CPR Requirement: <b>${slot.requirement}</b>${LENIENCY > 0 ? ` (−${LENIENCY} flex allowed)` : ""}</div>
+      <div class="tt2p-tt-row">Your CPR: <b>${chanceText}</b>${statusIcon}</div>
       ${starHtml}
     `;
   }
@@ -411,7 +615,6 @@
     return d.innerHTML;
   }
 
-  // Formats a decimal-hours number into a compact "1d 4h 20m" style string.
   function formatDuration(hours) {
     if (!Number.isFinite(hours) || hours <= 0) return "0m";
     const totalMinutes = Math.round(hours * 60);
@@ -425,18 +628,15 @@
     return parts.join(" ");
   }
 
-  // Strict "HH:MM" format — used for the active planner's own remaining
-  // time, which is always bounded within a single 24h window so days never
-  // come into play here.
   function formatHM(hours) {
-    if (!Number.isFinite(hours) || hours < 0) hours = 0;
+    if (!Number.isFinite(hours) || hours <= 0) return "0m";
     const totalMinutes = Math.round(hours * 60);
     const h = Math.floor(totalMinutes / 60);
     const m = totalMinutes % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
   }
 
-  // "HH:MM:SS" — used for the time-until-stall countdown.
   function formatHMS(hours) {
     if (!Number.isFinite(hours) || hours < 0) hours = 0;
     const totalSeconds = Math.round(hours * 3600);
@@ -458,12 +658,18 @@
     tt.style.top = `${y}px`;
   }
 
+  const tooltipState = new WeakMap();
   function attachTooltip(slot, crimeName, tracked) {
-    if (!slot.wrapperEl || slot.wrapperEl.dataset.tt2pTooltipBound) return;
+    if (!slot.wrapperEl) return;
+    // Always keep the latest data so the tooltip never shows stale first-render values
+    tooltipState.set(slot.wrapperEl, { slot, crimeName, tracked });
+    if (slot.wrapperEl.dataset.tt2pTooltipBound) return;
     slot.wrapperEl.dataset.tt2pTooltipBound = "1";
     slot.wrapperEl.addEventListener("mouseenter", () => {
+      const st = tooltipState.get(slot.wrapperEl);
+      if (!st) return;
       const tt = ensureCustomTooltip();
-      tt.innerHTML = tooltipHtml(slot, crimeName, tracked);
+      tt.innerHTML = tooltipHtml(st.slot, st.crimeName, st.tracked);
       tt.classList.add("tt2p-tooltip-visible");
     });
     slot.wrapperEl.addEventListener("mousemove", positionTooltip);
@@ -472,20 +678,13 @@
     });
   }
 
-  /* ============================================================================
-   * Sort/filter toggle pill — sits just below the Spawn action row. Flipping
-   * it off restores the page's native order and disables all our styling
-   * (join-button disabling, qualify highlighting, level-cap hiding). CPR
-   * capture, weight boxes, and tooltips keep running either way since they're
-   * informational only and don't change layout.
-   * ============================================================================ */
   function updateTogglePillUi() {
     const pill = document.getElementById("tt2p-toggle-pill");
     const label = document.getElementById("tt2p-toggle-state-label");
     if (!pill || !label) return;
     pill.classList.toggle("tt2p-pill-on", dynamicSortEnabled);
     pill.classList.toggle("tt2p-pill-off", !dynamicSortEnabled);
-    label.textContent = dynamicSortEnabled ? "ON - OCs are now sorting based on your CPR level & level of urgency to fill each OC. Start-up any blank OCs that are at the top " : "OFF (vanilla)";
+    label.textContent = dynamicSortEnabled ? "ON - OCs are sorting based on your CPR & urgency." : "OFF (vanilla)";
   }
 
   function ensureSortTogglePill(container) {
@@ -506,16 +705,12 @@
         runPass();
       });
     }
-    // Re-insert at the top every pass in case React wiped it during a re-render.
     if (container.firstChild !== row) {
       container.insertBefore(row, container.firstChild);
     }
     updateTogglePillUi();
   }
 
-  /* ============================================================================
-   * Settings gear + purge panel
-   * ============================================================================ */
   function ensureGearUi() {
     if (document.getElementById("tt2p-gear-btn")) return;
 
@@ -523,7 +718,7 @@
     gear.id = "tt2p-gear-btn";
     gear.type = "button";
     gear.title = "Mutation OC Prioritizer settings";
-    gear.innerHTML = `<span class="tt2p-gear-icon">\u2699\uFE0F</span><span class="tt2p-gear-label">Mutation OC Prioritizer</span>`;
+    gear.innerHTML = `<span class="tt2p-gear-icon">⚙️</span><span class="tt2p-gear-label">Mutation Prioritizer</span>`;
     document.body.appendChild(gear);
 
     const panel = document.createElement("div");
@@ -531,7 +726,7 @@
     panel.innerHTML = `
       <div class="tt2p-settings-header">Your Settings</div>
       <div class="tt2p-settings-row">
-        <label for="tt2p-difficulty-input">Max OC difficulty you're cleared for (1\u201310):</label>
+        <label for="tt2p-difficulty-input">Max OC difficulty (1–10):</label>
         <input id="tt2p-difficulty-input" type="number" min="1" max="10" value="${maxDifficultyLevel}" />
         <button id="tt2p-difficulty-save" type="button">Save</button>
       </div>
@@ -539,6 +734,12 @@
         <label class="tt2p-settings-checkbox-label">
           <input id="tt2p-show-hidden-input" type="checkbox" ${showHiddenOcs ? "checked" : ""} />
           Show hidden OCs (e.g. Manifest Cruelty)
+        </label>
+      </div>
+      <div class="tt2p-settings-row" style="margin-top:6px;">
+        <label class="tt2p-settings-checkbox-label">
+          <input id="tt2p-hide-flavor-input" type="checkbox" ${hideFlavorText ? "checked" : ""} />
+          Hide OC Flavor Text, [Leaves only info boxes]
         </label>
       </div>
       <div class="tt2p-settings-header" style="margin-top:14px;">CPR Data</div>
@@ -576,9 +777,6 @@
     gear.addEventListener("click", () => {
       panel.classList.toggle("tt2p-open");
       if (panel.classList.contains("tt2p-open")) {
-        // Gear button now sits near the top of the page, so open the panel
-        // DOWNWARD from its bottom edge (measured live, same reasoning as
-        // before — its height varies with the label text).
         const gearRect = gear.getBoundingClientRect();
         panel.style.top = `${Math.round(gearRect.bottom + 10)}px`;
         panel.style.bottom = "auto";
@@ -606,6 +804,13 @@
       runPass();
     });
 
+    panel.querySelector("#tt2p-hide-flavor-input").addEventListener("change", (e) => {
+      hideFlavorText = !!e.target.checked;
+      localStorage.setItem(HIDE_FLAVOR_KEY, hideFlavorText ? "1" : "0");
+      showToast(hideFlavorText ? "OC Flavor text hidden." : "OC Flavor text restored.");
+      runPass();
+    });
+
     panel.querySelector("#tt2p-purge-btn").addEventListener("click", () => {
       if (confirm("Erase all locally stored CPR data for this browser? This can't be undone.")) {
         localStorage.removeItem(STORAGE_KEY);
@@ -623,7 +828,7 @@
     const crimeNames = sortCrimeNamesByDifficulty(Object.keys(store));
 
     if (crimeNames.length === 0) {
-      body.innerHTML = `<div class="tt2p-settings-empty">No CPR data stored yet. Browse Recruiting/Planning with open roles showing to capture some.</div>`;
+      body.innerHTML = `<div class="tt2p-settings-empty">No CPR data stored yet. Browse Recruiting/Planning to capture some.</div>`;
       return;
     }
 
@@ -647,15 +852,15 @@
         const dt = new Date(entry.updatedAt);
         const dateStr = isNaN(dt) ? "" : dt.toLocaleDateString() + " " + dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-        let reqText = "\u2014";
-        let diffHtml = `<span class="tt2p-diff-neutral">\u2014</span>`;
+        let reqText = "—";
+        let diffHtml = `<span class="tt2p-diff-neutral">—</span>`;
         if (reqMap) {
           const req = normalizeLookup(reqMap, roleName);
           if (req !== undefined) {
             reqText = String(req);
             const diff = entry.value - req;
             diffHtml = diff >= 0
-              ? `<span class="tt2p-diff-met">\u2713 +${diff}</span>`
+              ? `<span class="tt2p-diff-met">✓ +${diff}</span>`
               : `<span class="tt2p-diff-short">Need +${-diff}</span>`;
           }
         }
@@ -672,13 +877,6 @@
     body.innerHTML = html;
   }
 
-  // Growth History tab: for each role, shows the value at the start of the
-  // selected window vs the current value. "Start of window" = the last
-  // recorded value BEFORE the cutoff (so growth reflects what actually
-  // changed during the window, not just re-stating the current number), or
-  // the earliest-ever recorded value if there's no history before the
-  // cutoff. Older entries (pre-history-tracking) fall back to a single
-  // {value, at: updatedAt} point so nothing errors on old data.
   function renderGrowthPanel() {
     const listEl = document.getElementById("tt2p-growth-list");
     const rangeSel = document.getElementById("tt2p-growth-range");
@@ -723,7 +921,7 @@
         crimeRows += `<div class="tt2p-settings-role tt2p-growth-row">
           <span>${escapeHtml(roleName)}</span>
           <span class="tt2p-col-num">${startValue}</span>
-          <span class="tt2p-col-num tt2p-growth-arrow">\u2192</span>
+          <span class="tt2p-col-num tt2p-growth-arrow">→</span>
           <span class="tt2p-col-num">${endValue}</span>
           <span class="tt2p-col-num">${growthHtml}</span>
         </div>`;
@@ -752,13 +950,37 @@
   }
 
   /* ============================================================================
-   * Styles
+   * Styles (Inter Font + Carbon-style Join Cross & Delta Box + Bento Header Placement)
    * ============================================================================ */
   function injectStyles() {
     if (document.getElementById("tt2p-styles")) return;
+
+    if (!document.getElementById("tt2p-font-inter")) {
+      const fontLink = document.createElement("link");
+      fontLink.id = "tt2p-font-inter";
+      fontLink.rel = "stylesheet";
+      fontLink.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap";
+      document.head.appendChild(fontLink);
+    }
+
     const style = document.createElement("style");
     style.id = "tt2p-styles";
     style.textContent = `
+      :root {
+        --tt2p-red-accent: #c82121;
+        --tt2p-red-border: #882222;
+        --tt2p-red-light: #ff8787;
+        --tt2p-red-pink: #ffaaaa;
+        --tt2p-red-darkbg: #1f1111;
+        --tt2p-charcoal: #1e1e1e;
+        --tt2p-deep: #121212;
+        --tt2p-border: #2a2a2a;
+        --tt2p-text: #e8e8e8;
+        --tt2p-mute: #888888;
+        --tt2p-good: #5ad06e;
+        --tt2p-warn: #f0b43c;
+      }
+
       #tt2p-toast-container {
         position: fixed;
         right: 14px;
@@ -770,14 +992,14 @@
         pointer-events: none;
       }
       .tt2p-toast {
-        background: #1c1c1c;
-        border: 1px solid #3ecf5c;
-        color: #eaeaea;
+        background: var(--tt2p-charcoal);
+        border: 1px solid var(--tt2p-good);
+        color: var(--tt2p-text);
         font-size: 12px;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', Arial, sans-serif;
         padding: 8px 12px;
         border-radius: 4px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.5);
         opacity: 0;
         transform: translateX(20px);
         transition: opacity 0.25s ease, transform 0.25s ease;
@@ -786,19 +1008,80 @@
       .tt2p-toast-in { opacity: 1; transform: translateX(0); }
       .tt2p-toast-out { opacity: 0; transform: translateX(20px); }
 
+      /* Remove native border above role cards */
+      div[class*="slots__"],
+      .tt2p-roles-container {
+        border-top: none !important;
+        box-shadow: none !important;
+        background-image: none !important;
+        margin-top: 6px !important; /* thin buffer between chevrons and roles */
+        padding-top: 0 !important;
+      }
+      div[class*="slots__"]::before,
+      div[class*="slots__"]::after,
+      .tt2p-roles-container::before,
+      .tt2p-roles-container::after {
+        display: none !important;
+        content: none !important;
+        border: none !important;
+      }
+      /* Nothing below the chevron bars should draw a line either */
+      .tt2p-timeline-strip {
+        border-bottom: none !important;
+        padding-bottom: 0 !important;
+        margin-bottom: 0 !important;
+      }
+
+      /* Subtle Tinted Role Backgrounds */
       .tt2p-role-good > button[class*="slotHeader__"] {
-        outline: 2px solid #3ecf5c !important;
-        outline-offset: -2px;
+        background-color: rgba(90, 208, 110, 0.12) !important;
+        border-radius: 4px;
       }
       .tt2p-role-bad > button[class*="slotHeader__"] {
-        outline: 2px solid #cf3e3e !important;
-        outline-offset: -2px;
+        background-color: rgba(200, 33, 33, 0.15) !important;
+        border-radius: 4px;
       }
-      .tt2p-join-disabled {
+
+      /* Carbon-Style Disabled Join Button with Red Cross Overlay */
+      button[class*="joinButton__"].tt2p-join-disabled {
+        position: relative !important;
         pointer-events: none !important;
-        opacity: 0.35 !important;
-        filter: grayscale(70%);
+        opacity: 0.45 !important;
         cursor: not-allowed !important;
+        text-decoration: line-through;
+      }
+      button[class*="joinButton__"].tt2p-join-disabled::after {
+        content: '✕';
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #ff3b30;
+        font-family: Arial, sans-serif;
+        font-weight: 900;
+        font-size: 18px;
+        line-height: 1;
+        text-shadow: 0 0 3px #000, 0 0 1px #000;
+        pointer-events: none;
+      }
+
+      /* Carbon-Style Delta Box replacing "24hrs" planning box */
+      div[class*="planningTime__"].tt2p-delta-box {
+        cursor: help !important;
+      }
+      div[class*="planningTime__"].tt2p-delta-box > span {
+        display: none !important;
+      }
+      .tt2p-cpr-delta {
+        font-family: 'Inter', Arial, sans-serif;
+        font-weight: 800;
+        font-size: 12px;
+        letter-spacing: 0.3px;
+        color: var(--tt2p-good);
+      }
+      .tt2p-cpr-delta.tt2p-cpr-delta-bad {
+        color: var(--tt2p-red-light);
       }
 
       #${NOT_QUALIFIED_HEADER_ID} {
@@ -808,211 +1091,232 @@
         margin: 18px 0 10px 0;
         padding: 8px 12px;
         border-radius: 4px;
-        background: rgba(207, 62, 62, 0.12);
-        border: 1px dashed rgba(207, 62, 62, 0.5);
-        color: #d98c8c;
-        font-family: Arial, sans-serif;
+        background: rgba(200, 33, 33, 0.15);
+        border: 1px dashed var(--tt2p-red-border);
+        color: var(--tt2p-red-light);
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 13px;
-        font-weight: bold;
+        font-weight: 700;
         letter-spacing: 0.3px;
       }
-      .tt2p-not-qualified-card {
-        opacity: 0.75;
-      }
+      .tt2p-not-qualified-card { opacity: 0.75; }
 
       .tt2p-status-badge {
         margin-top: 6px;
         display: inline-block;
         padding: 3px 8px;
         border-radius: 4px;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 11px;
-        font-weight: bold;
+        font-weight: 700;
       }
       .tt2p-status-badge.tt2p-status-crowded {
-        background: rgba(255, 165, 0, 0.15);
-        border: 1px solid rgba(255, 165, 0, 0.5);
-        color: #ffb84d;
+        background: rgba(240, 180, 60, 0.15);
+        border: 1px solid rgba(240, 180, 60, 0.5);
+        color: var(--tt2p-warn);
       }
       .tt2p-status-badge.tt2p-status-stalled {
-        background: #ffcc33;
-        border: 1px solid #e0a800;
-        color: #1a1a1a;
+        background: var(--tt2p-red-darkbg);
+        border: 1px solid var(--tt2p-red-border);
+        color: var(--tt2p-red-light);
       }
 
-      /* OC Timeline strip — single row inserted between the description and
-         the roles grid, columns aligned to the role boxes directly below. */
+      /* Bento Box Summary Container */
+      .tt2p-top-bento-container {
+        margin: 10px 12px 10px 12px; /* Uniform 10px top & bottom margin */
+        font-family: 'Inter', Arial, sans-serif;
+      }
+      .tt2p-bento-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 6px;
+      }
+      @media (max-width: 1024px) {
+        .tt2p-bento-grid { grid-template-columns: repeat(3, 1fr); }
+      }
+      @media (max-width: 600px) {
+        .tt2p-bento-grid { grid-template-columns: repeat(2, 1fr); }
+      }
+      .tt2p-bento-tile {
+        background: #1a1a1a;
+        border: 1px solid var(--tt2p-border);
+        border-top: 2px solid var(--tt2p-red-border);
+        border-radius: 4px;
+        padding: 6px 8px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+      .tt2p-bento-tile.tt2p-bento-active { border-top-color: var(--tt2p-red-accent); }
+      .tt2p-bento-tile.tt2p-bento-warning { border-top-color: var(--tt2p-warn); }
+      .tt2p-bento-tile.tt2p-bento-danger { border-top-color: var(--tt2p-red-accent); background: var(--tt2p-red-darkbg); }
+      .tt2p-bento-label {
+        font-family: 'Inter', sans-serif;
+        font-size: 9px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--tt2p-mute);
+        margin-bottom: 2px;
+      }
+      .tt2p-bento-val {
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--tt2p-text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Timeline Strip Header & Lower Section Layout with 2px Bevel Framing */
       .tt2p-timeline-strip {
-        margin: 10px 0 8px;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255,255,255,0.12);
-        font-family: Arial, sans-serif;
+        margin: 0;
+        padding-top: 10px; /* Uniform 10px gap between top divider and crimeID text */
+        border-top: 1px solid #000000 !important;
+        box-shadow: inset 0 1px 0 #484848; /* 2px bevel top divider */
+        font-family: 'Inter', Arial, sans-serif;
       }
       .tt2p-tl-strip-header {
         display: flex;
         flex-wrap: wrap;
         align-items: baseline;
-        gap: 3px 4px;
+        gap: 4px;
         font-size: 11px;
-        margin-bottom: 10px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
+        margin-top: 0 !important;
+        margin-bottom: 2px;
+        color: var(--tt2p-text);
       }
       .tt2p-tl-strip-title {
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #cfe8ff;
-        white-space: pre-wrap;
+        font-weight: 400;
+        color: var(--tt2p-text, #e8e8e8);
       }
-      .tt2p-tl-strip-details {
-        color: #cfcfcf;
-        white-space: pre-wrap;
-      }
-      .tt2p-summary-warn { color: #ff9a7a; font-weight: bold; }
-      .tt2p-tl-strip-sep { opacity: 0.35; margin: 0 2px; }
 
       .tt2p-tl-strip-bars {
         display: flex;
+        margin-top: 10px !important; /* Uniform 10px gap between bottom divider and progress bars */
+        margin-bottom: 0px !important; /* 6px gap to role sections handled via container margin */
       }
+
       .tt2p-tl-seg {
         height: 18px;
         border-radius: 3px;
-        background: rgba(255,255,255,0.06);
-        box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+        background: var(--tt2p-deep);
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
         position: relative;
         overflow: hidden;
         display: flex;
         align-items: center;
         justify-content: center;
-        /* Chevron pointing right on both ends, so consecutive segments read
-           as a connected arrow chain flowing toward completion. */
         clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%, 12% 50%);
-        /* Drop-shadow (not border) traces the actual clipped chevron
-           silhouette on all sides, including the diagonal cuts — a plain
-           border renders inconsistently along clip-path edges. */
-        filter:
-          drop-shadow(1px 0 0 rgba(0,0,0,0.9))
-          drop-shadow(-1px 0 0 rgba(0,0,0,0.9))
-          drop-shadow(0 1px 0 rgba(0,0,0,0.9))
-          drop-shadow(0 -1px 0 rgba(0,0,0,0.9));
+        filter: drop-shadow(1px 0 0 rgba(0,0,0,0.9)) drop-shadow(-1px 0 0 rgba(0,0,0,0.9)) drop-shadow(0 1px 0 rgba(0,0,0,0.9)) drop-shadow(0 -1px 0 rgba(0,0,0,0.9));
       }
-      .tt2p-tl-seg-first {
-        clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%);
-      }
-      .tt2p-tl-seg-last {
-        clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 12% 50%);
-      }
-      .tt2p-tl-seg-only {
-        clip-path: none;
-        border-radius: 4px;
-      }
+      .tt2p-tl-seg-first { clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%); }
+      .tt2p-tl-seg-last { clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 12% 50%); }
+      .tt2p-tl-seg-only { clip-path: none; border-radius: 4px; }
       .tt2p-tl-seg-fill {
         position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
+        left: 0; top: 0; bottom: 0;
         transition: width 0.35s ease;
       }
-      .tt2p-tl-seg-fill::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0) 55%);
+      .tt2p-tl-seg-complete .tt2p-tl-seg-fill {
+        background: linear-gradient(90deg, var(--tt2p-red-border), var(--tt2p-red-accent));
       }
-      .tt2p-tl-seg-complete .tt2p-tl-seg-fill { background: linear-gradient(90deg, #5be085, #2ea44f); }
       .tt2p-tl-seg-active .tt2p-tl-seg-fill {
         background-image:
-          linear-gradient(90deg, #6cb8ff, #2f86e0),
-          repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0 7px, transparent 7px 14px);
+          linear-gradient(90deg, var(--tt2p-red-accent), var(--tt2p-red-light)),
+          repeating-linear-gradient(45deg, rgba(255,255,255,0.25) 0 7px, transparent 7px 14px);
         animation: tt2p-flow-stripes 0.9s linear infinite;
       }
       @keyframes tt2p-flow-stripes {
         from { background-position: 0 0, 0 0; }
         to   { background-position: 0 0, 28px 0; }
       }
-      .tt2p-tl-seg-idle .tt2p-tl-seg-fill { background: transparent; }
-      .tt2p-tl-seg-idle-warn { background: rgba(224,92,92,0.22); }
-      .tt2p-tl-seg-idle-warn .tt2p-tl-seg-fill { background: transparent; }
-      .tt2p-tl-seg-blocked { background: rgba(160,90,220,0.22); }
-      .tt2p-tl-seg-blocked .tt2p-tl-seg-fill { background: transparent; }
+      .tt2p-tl-seg-idle { background: var(--tt2p-deep); }
+      .tt2p-tl-seg-idle-warn { background: rgba(200, 33, 33, 0.2); }
+      .tt2p-tl-seg-blocked { background: rgba(160, 90, 220, 0.2); }
       .tt2p-tl-seg-open { background: rgba(255,255,255,0.03); }
-      .tt2p-tl-seg-open .tt2p-tl-seg-label { opacity: 0.5; }
       .tt2p-tl-seg-label {
         position: relative;
         z-index: 2;
-        font-size: 9.5px;
+        font-family: 'Inter', sans-serif;
+        font-size: 8.5px;
         font-weight: 700;
         color: #fff;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
         padding: 0 4px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
 
+      /* Metadata Stall Row with Bottom 2px Bevel framing */
       .tt2p-tl-stall-row {
+        font-family: 'Inter', sans-serif;
         font-size: 11px;
-        color: #cfcfcf;
-        margin-bottom: 8px;
+        color: var(--tt2p-mute);
+        padding-bottom: 10px !important; /* Uniform 10px gap between text and bottom divider */
+        margin-bottom: 0 !important;
+        border-bottom: 1px solid #000000 !important;
+        box-shadow: 0 1px 0 #484848; /* 2px bevel bottom divider */
       }
-      .tt2p-tl-stall-row.tt2p-tl-stall-warn { color: #ff9a7a; font-weight: bold; }
-      .tt2p-tl-stall-row.tt2p-tl-stall-ok { color: #8fd6a3; }
-      .tt2p-tl-stall-row.tt2p-tl-stall-uninitiated { color: #8fc7ff; }
-      .tt2p-tl-stall-row.tt2p-tl-stall-top-pick { color: #ffd166; font-weight: bold; }
+      .tt2p-tl-stall-row.tt2p-tl-stall-warn { color: var(--tt2p-red-accent); font-weight: 700; }
+      .tt2p-tl-stall-row.tt2p-tl-stall-ok { color: var(--tt2p-good); }
+      .tt2p-tl-stall-row.tt2p-tl-stall-uninitiated { color: #9fd3ff; }
+      .tt2p-tl-stall-row.tt2p-tl-stall-top-pick { color: var(--tt2p-warn); font-weight: 700; }
 
-      /* Weight boxes */
-      .tt2p-weight-box {
-        margin-top: 6px;
-        padding: 6px;
-        text-align: center;
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 6px;
-        background: rgba(255,255,255,0.03);
-        font-family: Arial, sans-serif;
+      /* Red Progress Bar Below Each Role Box */
+      .tt2p-role-prog-bar {
+        position: absolute;
+        left: 2px;
+        right: 2px;
+        bottom: -6px;
+        height: 4px;
+        background: #262626;
+        border-radius: 2px;
+        overflow: hidden;
+        z-index: 4;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
       }
-      .tt2p-weight-label {
+      .tt2p-role-prog-fill {
         display: block;
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: .05em;
-        opacity: .8;
-        padding-bottom: 3px;
-        margin-bottom: 4px;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
-        color: #eaeaea;
+        height: 100%;
+        background: linear-gradient(90deg, var(--tt2p-red-border), var(--tt2p-red-accent));
+        transition: width 0.3s ease;
       }
-      .tt2p-weight-value {
-        display: block;
-        font-size: 15px;
-        font-weight: 700;
-        margin-top: 2px;
-        color: #eaeaea;
+      .tt2p-prog-complete .tt2p-role-prog-fill { background: var(--tt2p-red-border); }
+      .tt2p-prog-active .tt2p-role-prog-fill {
+        background: linear-gradient(90deg, var(--tt2p-red-accent), var(--tt2p-red-light));
+        box-shadow: 0 0 5px var(--tt2p-red-accent);
       }
+      .tt2p-prog-idle .tt2p-role-prog-fill { background: transparent; }
+      .tt2p-prog-blocked .tt2p-role-prog-fill { background: var(--tt2p-red-pink); }
 
       /* Custom tooltip */
       #tt2p-tooltip {
         position: fixed;
         z-index: 9999999;
-        background: #101010;
-        border: 1px solid rgba(255,255,255,0.25);
+        background: var(--tt2p-charcoal);
+        border: 1px solid var(--tt2p-red-border);
         border-radius: 6px;
         padding: 8px 10px;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 12px;
-        color: #eaeaea;
-        max-width: 240px;
+        color: var(--tt2p-text);
+        max-width: 260px;
         pointer-events: none;
         opacity: 0;
         transition: opacity 0.1s ease;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.6);
       }
       #tt2p-tooltip.tt2p-tooltip-visible { opacity: 1; }
-      .tt2p-tt-title { font-weight: bold; margin-bottom: 4px; }
+      .tt2p-tt-title { font-weight: 700; margin-bottom: 4px; color: var(--tt2p-red-pink); }
       .tt2p-tt-row { margin-top: 2px; }
-      .tt2p-tt-pass { color: #3ecf5c; font-weight: bold; }
-      .tt2p-tt-fail { color: #e05c5c; font-weight: bold; }
-      .tt2p-tt-idle { color: #ffb84d; font-weight: bold; }
+      .tt2p-tt-pass { color: var(--tt2p-good); font-weight: 700; }
+      .tt2p-tt-fail { color: var(--tt2p-red-light); font-weight: 700; }
+      .tt2p-tt-idle { color: var(--tt2p-warn); font-weight: 700; }
 
       /* Gear + settings panel */
       #tt2p-gear-btn {
@@ -1023,9 +1327,9 @@
         width: 26px;
         padding: 8px 0;
         border-radius: 13px;
-        background: #1c1c1c;
-        border: 1px solid rgba(255,255,255,0.25);
-        color: #eaeaea;
+        background: var(--tt2p-charcoal);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: var(--tt2p-text);
         cursor: pointer;
         display: flex;
         flex-direction: column;
@@ -1038,147 +1342,123 @@
         writing-mode: vertical-rl;
         transform: rotate(180deg);
         font-size: 10px;
-        font-weight: bold;
+        font-weight: 700;
         letter-spacing: 0.03em;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', Arial, sans-serif;
         white-space: nowrap;
-        opacity: 0.9;
       }
       #tt2p-settings-panel {
         position: fixed;
         right: 14px;
         top: 60px;
-        width: 420px;
-        max-height: min(460px, 70vh);
+        width: min(420px, calc(100vw - 28px));
+        max-height: min(460px, 75vh);
         overflow-y: auto;
-        background: #1c1c1c;
-        border: 1px solid rgba(255,255,255,0.25);
+        background: var(--tt2p-charcoal);
+        border: 1px solid var(--tt2p-red-border);
         border-radius: 6px;
-        padding: 10px;
+        padding: 12px;
         z-index: 999999;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 12px;
-        color: #eaeaea;
+        color: var(--tt2p-text);
         display: none;
       }
       #tt2p-settings-panel.tt2p-open { display: block; }
-      .tt2p-settings-header { font-weight: bold; font-size: 13px; margin-bottom: 8px; }
+      .tt2p-settings-header { font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--tt2p-red-pink); }
       .tt2p-settings-empty { opacity: 0.7; font-style: italic; }
-      .tt2p-settings-crime { font-weight: bold; margin-top: 10px; margin-bottom: 2px; color: #9fd3ff; }
+      .tt2p-settings-crime { font-weight: 700; margin-top: 10px; margin-bottom: 2px; color: #9fd3ff; }
       .tt2p-settings-role {
         display: grid;
         grid-template-columns: 1fr 62px 46px 66px 96px;
         align-items: center;
         gap: 6px;
         padding: 3px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
+        border-bottom: 1px solid rgba(255,255,255,0.06);
       }
       .tt2p-settings-headerrow {
-        font-weight: bold;
+        font-weight: 700;
         font-size: 10.5px;
         text-transform: uppercase;
         letter-spacing: 0.03em;
-        color: #9fd3ff;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
+        color: var(--tt2p-red-pink);
+        border-bottom: 1px solid rgba(255,255,255,0.15);
         padding-bottom: 5px;
       }
       .tt2p-col-num { text-align: right; font-variant-numeric: tabular-nums; }
-      .tt2p-settings-value { font-weight: bold; }
-      .tt2p-diff-met { color: #7fe89b; font-weight: bold; }
-      .tt2p-diff-short { color: #ff9a7a; font-weight: bold; }
+      .tt2p-settings-value { font-weight: 700; }
+      .tt2p-diff-met { color: var(--tt2p-good); font-weight: 700; }
+      .tt2p-diff-short { color: var(--tt2p-red-light); font-weight: 700; }
       .tt2p-diff-neutral { opacity: 0.4; }
 
-      .tt2p-tabs {
-        display: flex;
-        gap: 4px;
-        margin: 6px 0 8px;
-      }
+      .tt2p-tabs { display: flex; gap: 4px; margin: 6px 0 8px; }
       .tt2p-tab-btn {
         flex: 1;
         padding: 5px 8px;
         background: rgba(255,255,255,0.04);
         border: 1px solid rgba(255,255,255,0.15);
-        color: #cfcfcf;
+        color: var(--tt2p-mute);
         border-radius: 4px;
         cursor: pointer;
         font-size: 11px;
-        font-family: Arial, sans-serif;
+        font-family: 'Inter', sans-serif;
       }
       .tt2p-tab-btn:hover { background: rgba(255,255,255,0.08); }
       .tt2p-tab-btn.tt2p-tab-active {
-        background: rgba(62, 207, 92, 0.15);
-        border-color: rgba(62, 207, 92, 0.5);
-        color: #7fe89b;
-        font-weight: bold;
+        background: var(--tt2p-red-darkbg);
+        border-color: var(--tt2p-red-accent);
+        color: var(--tt2p-red-pink);
+        font-weight: 700;
       }
       .tt2p-tab-panel { display: none; }
       .tt2p-tab-panel.tt2p-tab-panel-active { display: block; }
 
-      .tt2p-growth-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 11px;
-        margin-bottom: 8px;
-      }
+      .tt2p-growth-controls { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-bottom: 8px; }
       .tt2p-growth-controls select {
-        background: #101010;
-        border: 1px solid rgba(255,255,255,0.25);
-        color: #eaeaea;
+        background: var(--tt2p-deep);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: var(--tt2p-text);
         border-radius: 4px;
         padding: 3px 6px;
         font-size: 11px;
       }
       .tt2p-growth-row { grid-template-columns: 1fr 44px 20px 44px 56px; }
       .tt2p-growth-arrow { opacity: 0.5; }
-      .tt2p-settings-date { opacity: 0.6; font-size: 10px; white-space: nowrap; text-align: right; }
       .tt2p-col-date { opacity: 0.6; font-size: 10px; white-space: nowrap; text-align: right; }
       #tt2p-purge-btn {
         width: 100%;
         margin-top: 12px;
         padding: 6px;
-        background: rgba(207, 62, 62, 0.15);
-        border: 1px solid rgba(207, 62, 62, 0.5);
-        color: #e05c5c;
+        background: var(--tt2p-red-darkbg);
+        border: 1px solid var(--tt2p-red-accent);
+        color: var(--tt2p-red-light);
         border-radius: 4px;
         cursor: pointer;
-        font-weight: bold;
+        font-weight: 700;
       }
-      #tt2p-purge-btn:hover { background: rgba(207, 62, 62, 0.3); }
+      #tt2p-purge-btn:hover { background: rgba(200, 33, 33, 0.3); }
 
-      .tt2p-settings-row {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        font-size: 12px;
-      }
-      .tt2p-settings-row input {
+      .tt2p-settings-row { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+      .tt2p-settings-row input[type="number"] {
         width: 60px;
-        background: #101010;
-        border: 1px solid rgba(255,255,255,0.25);
-        color: #eaeaea;
+        background: var(--tt2p-deep);
+        border: 1px solid rgba(255,255,255,0.2);
+        color: var(--tt2p-text);
         border-radius: 4px;
         padding: 4px 6px;
       }
       .tt2p-settings-row button {
-        background: rgba(62, 207, 92, 0.15);
-        border: 1px solid rgba(62, 207, 92, 0.5);
-        color: #7fe89b;
+        background: rgba(68, 204, 68, 0.15);
+        border: 1px solid var(--tt2p-good);
+        color: var(--tt2p-good);
         border-radius: 4px;
         padding: 4px 8px;
         cursor: pointer;
-        font-weight: bold;
+        font-weight: 700;
       }
-      .tt2p-settings-row button:hover { background: rgba(62, 207, 92, 0.3); }
-      .tt2p-settings-checkbox-label {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        cursor: pointer;
-        font-size: 12px;
-      }
+      .tt2p-settings-row button:hover { background: rgba(68, 204, 68, 0.3); }
+      .tt2p-settings-checkbox-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
 
-      /* Sort toggle pill row */
       #tt2p-sort-toggle-row {
         display: flex;
         align-items: center;
@@ -1186,23 +1466,23 @@
         margin: 10px 0;
         padding: 8px 12px;
         border-radius: 4px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-family: Arial, sans-serif;
+        background: var(--tt2p-charcoal);
+        border: 1px solid var(--tt2p-border);
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 12px;
-        color: #eaeaea;
+        color: var(--tt2p-text);
       }
-      .tt2p-toggle-label { font-weight: bold; opacity: 0.9; }
+      .tt2p-toggle-label { font-weight: 700; opacity: 0.9; }
 
       #tt2p-star-legend {
         margin: -4px 0 10px;
         padding: 6px 12px;
         border-radius: 4px;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.1);
-        font-family: Arial, sans-serif;
+        background: var(--tt2p-charcoal);
+        border: 1px solid rgba(255,255,255,0.08);
+        font-family: 'Inter', Arial, sans-serif;
         font-size: 11px;
-        color: #cfcfcf;
+        color: var(--tt2p-mute);
         display: flex;
         flex-wrap: wrap;
         gap: 2px 16px;
@@ -1231,7 +1511,7 @@
         padding: 0;
         transition: background 0.2s ease;
       }
-      .tt2p-pill-on { background: #3ecf5c; }
+      .tt2p-pill-on { background: var(--tt2p-red-accent); }
       .tt2p-pill-off { background: #555; }
       .tt2p-pill .tt2p-pill-knob {
         position: absolute;
@@ -1249,9 +1529,6 @@
     document.head.appendChild(style);
   }
 
-  /* ============================================================================
-   * CPR logging
-   * ============================================================================ */
   function findOcCards() {
     return Array.from(document.querySelectorAll("[data-oc-id]"));
   }
@@ -1263,8 +1540,6 @@
     return undefined;
   }
 
-  // Reads the "X/10" difficulty chip live from the DOM rather than hardcoding
-  // a crime->tier map — more robust if Torn adds/moves crimes between tiers.
   function readDifficulty(cardEl) {
     const valEl = cardEl.querySelector('span[class*="levelValue__"]');
     if (!valEl) return null;
@@ -1272,12 +1547,6 @@
     return Number.isNaN(v) ? null : v;
   }
 
-  // Reads the scenario's own overall countdown (DD:HH:MM:SS, the big digital
-  // clock on the card thumbnail) — a completely separate deadline from our
-  // computed "time until stall": this is when the OC listing itself expires
-  // if nobody organizes it in time. Used to tiebreak between same-tier
-  // vacant OCs — "pick the one expiring soonest" — since a fresh OC has no
-  // planning-queue data to rank by otherwise.
   function readOverallCountdownHours(cardEl) {
     const el = cardEl.querySelector('div[class*="phase__"] span[aria-hidden="true"]');
     if (!el) return null;
@@ -1287,55 +1556,48 @@
     return d * 24 + h + m / 60 + s / 3600;
   }
 
-  // Classifies an occupied role's planning state using the conic-gradient
-  // "planning clock" icon when present, PLUS session history when it's not:
-  //   'idle'        -> live clock present, at 0% — parked, hasn't started.
-  //   'in_progress' -> live clock present, 0% < x < 100%.
-  //   'complete'    -> live clock hit 100%, OR no live clock now but we HAVE
-  //                     seen one for this role earlier this session (it was
-  //                     ticking, and has since finished).
-  //   'blocked'     -> no live clock now, and we've NEVER seen one for this
-  //                     role this session — Torn renders this with the exact
-  //                     same static icon as a genuinely-complete role, so
-  //                     this is a best-effort inference, not a certainty.
-  //                     Most commonly means the occupant is missing a
-  //                     required item and can't even begin.
   function classifyOccupantPlanning(headerEl, historyKey) {
+    const wrapper = headerEl.parentElement;
+
+    const progressSvg = wrapper ? wrapper.querySelector('svg circle[stroke-dasharray], [class*="progress__"]') : null;
+    if (progressSvg) {
+      const strokeDash = progressSvg.getAttribute("stroke-dasharray");
+      if (strokeDash) {
+        const parts = strokeDash.split(/[\s,]+/).map(parseFloat);
+        if (parts.length >= 2 && parts[1] > 0) {
+          const pct = Math.min(100, Math.max(0, (parts[0] / parts[1]) * 100));
+          if (pct >= 99.9) return { pct: 100, state: "complete" };
+          if (pct > 0) return { pct, state: "in_progress" };
+        }
+      }
+    }
+
     const planningEl = headerEl.querySelector('[class*="planning__"]');
     if (planningEl) {
       slotProgressHistory[historyKey] = true;
       const style = planningEl.getAttribute("style") || "";
       const match = style.match(/([\d.]+)deg/);
       const deg = match ? parseFloat(match[1]) : NaN;
-      if (Number.isNaN(deg)) return { pct: 0, state: "idle" };
-      const pct = Math.min(100, Math.max(0, (deg / 360) * 100));
-      if (pct <= 0.01) return { pct, state: "idle" };
-      if (pct >= 99.99) return { pct: 100, state: "complete" };
-      return { pct, state: "in_progress" };
+      if (!Number.isNaN(deg)) {
+        const pct = Math.min(100, Math.max(0, (deg / 360) * 100));
+        if (pct <= 0.01) return { pct: 0, state: "idle" };
+        if (pct >= 99.99) return { pct: 100, state: "complete" };
+        return { pct, state: "in_progress" };
+      }
     }
+
     if (slotProgressHistory[historyKey]) {
       return { pct: 100, state: "complete" };
     }
     return { pct: 0, state: "blocked" };
   }
 
-  // Torn's own pause/active indicator for the whole card — a true, hard
-  // stall as opposed to a merely-crowded-but-still-active card.
   function isCardStalled(cardEl) {
     const iconEl = cardEl.querySelector('[class*="iconContainer__"]');
     if (!iconEl) return false;
     return (iconEl.getAttribute("aria-label") || "").toLowerCase() === "paused";
   }
 
-  // Estimates a queue timeline across occupied-but-not-complete roles, using
-  // DOM display order as a stand-in for join order (Torn doesn't expose real
-  // join timestamps, so this is an approximation, not a guarantee). Each
-  // role takes 24h once it actually starts. 'blocked' roles are excluded —
-  // we don't know if/when they'll ever resolve, so they'd corrupt the
-  // estimate rather than improve it. Returns the total hours until a
-  // hypothetical brand-new joiner would actually start planning, and
-  // annotates each relevant slot in-place with .timelineStartsInHours /
-  // .timelineRemainingHours.
   function computeTimeline(slots) {
     let cumulative = 0;
     slots.forEach((slot) => {
@@ -1354,10 +1616,6 @@
     return cumulative;
   }
 
-  // Torn only shows "Leave Role" on the ONE slot the viewer personally
-  // occupies — every other occupied slot shows "Remove from Role" instead
-  // (even to faction leadership). That's a reliable way to detect "am I in
-  // this OC" without needing to know the viewer's own username/ID at all.
   function isViewerInCard(cardEl) {
     const items = cardEl.querySelectorAll('[class*="slotMenuItem__"]');
     for (const el of items) {
@@ -1425,16 +1683,9 @@
 
     const totalSlots = slots.length;
     const openCount = totalSlots - occupiedCount;
-    // Level 9 crimes get a pass on the "busy" nudge — we don't have enough
-    // members who can do Hostile Takeover / Ace in the Hole, so queueing up
-    // on those is expected and accepted, not a sign of poor spreading-out.
     const crowded = idleCount >= CROWDING_IDLE_THRESHOLD && openCount > 0 && difficulty !== 9;
     const nextJoinerWaitHours = computeTimeline(slots);
 
-    // Star ranking: among OPEN roles this member actually qualifies for
-    // (CPR meets requirement), rank by role-impact weight descending and
-    // mark the top 3 gold/silver/bronze. Untracked crimes have no defined
-    // "qualifies" concept, so no stars there.
     if (tracked) {
       const openQualifying = slots.filter((s) => s.isOpen && s.qualifies === true && s.weight !== undefined);
       openQualifying.sort((a, b) => (b.weight || 0) - (a.weight || 0));
@@ -1451,20 +1702,9 @@
     };
   }
 
-  const STAR_ICONS = ["\u{1F947}", "\u{1F948}", "\u{1F949}"];
+  const STAR_ICONS = ["🥇", "🥈", "🥉"];
   const STAR_LABELS = ["Best", "2nd best", "3rd best"];
 
-  // Small gold/silver/bronze badge placed right before the role name, for
-  // the top 3 open roles (by weight) this member actually qualifies for.
-  // Re-evaluated every pass since qualification/weight context can shift as
-  // other members join or leave roles.
-  // Placed as an absolutely-positioned OVERLAY on the slot's outer wrapper
-  // div — deliberately NOT inserted into the slotHeader <button> itself.
-  // That button is the exact element Torn uses to open its own native
-  // action menu (View Profile / Remove from Role), and modifying its
-  // children risks React re-rendering it and closing that menu out from
-  // under the member. pointer-events:none means the badge never intercepts
-  // clicks/hover meant for the button beneath it either.
   function upsertStarBadge(slot) {
     if (!slot.wrapperEl) return;
     slot.wrapperEl.classList.add("tt2p-slot-relative");
@@ -1480,7 +1720,7 @@
       slot.wrapperEl.appendChild(badge);
     }
     badge.textContent = STAR_ICONS[slot.starRank] || "";
-    badge.title = `${STAR_LABELS[slot.starRank]} choice for you \u2014 based on your CPR and this role's impact on success chance`;
+    badge.title = `${STAR_LABELS[slot.starRank]} choice for you — based on your CPR and this role's impact`;
   }
 
   function ensureStarLegend(container) {
@@ -1490,9 +1730,9 @@
       legend = document.createElement("div");
       legend.id = "tt2p-star-legend";
       legend.innerHTML = `
-        <div class="tt2p-legend-row">\u{1F947} Best role for you \u2014 highest impact you qualify for</div>
-        <div class="tt2p-legend-row">\u{1F948} 2nd best choice</div>
-        <div class="tt2p-legend-row">\u{1F949} 3rd best choice</div>
+        <div class="tt2p-legend-row">🥇 Best role for you — highest impact you qualify for</div>
+        <div class="tt2p-legend-row">🥈 2nd best choice</div>
+        <div class="tt2p-legend-row">🥉 3rd best choice</div>
       `;
     }
     const toggleRow = document.getElementById("tt2p-sort-toggle-row");
@@ -1505,22 +1745,75 @@
     }
   }
 
-  function injectWeightBox(slot) {
-    if (!slot.wrapperEl || slot.weight === undefined) return;
-    if (slot.wrapperEl.querySelector(".tt2p-weight-box")) return;
-    const box = document.createElement("div");
-    box.className = "tt2p-weight-box";
-    box.innerHTML = `<span class="tt2p-weight-label">Weight</span><span class="tt2p-weight-value">${slot.weight.toFixed(1)}%</span>`;
-    slot.wrapperEl.appendChild(box);
+  function injectRoleProgressBar(slot) {
+    if (!slot.wrapperEl) return;
+    let bar = slot.wrapperEl.querySelector(".tt2p-role-prog-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "tt2p-role-prog-bar";
+      bar.innerHTML = `<span class="tt2p-role-prog-fill"></span>`;
+      slot.wrapperEl.appendChild(bar);
+    }
+    const fill = bar.querySelector(".tt2p-role-prog-fill");
+    if (slot.hasOccupant) {
+      bar.style.display = "block";
+      const pct = slot.planningPct || 0;
+      fill.style.width = `${pct}%`;
+      if (slot.planningState === "complete") {
+        bar.className = "tt2p-role-prog-bar tt2p-prog-complete";
+      } else if (slot.planningState === "in_progress") {
+        bar.className = "tt2p-role-prog-bar tt2p-prog-active";
+      } else if (slot.planningState === "blocked") {
+        bar.className = "tt2p-role-prog-bar tt2p-prog-blocked";
+      } else {
+        bar.className = "tt2p-role-prog-bar tt2p-prog-idle";
+      }
+    } else {
+      bar.style.display = "none";
+    }
   }
 
-  // Measures the ACTUAL rendered width of each role box and the gap between
-  // them, live, rather than hardcoding a pixel value — self-corrects if Torn
-  // changes their layout, adjusts to different viewport/zoom sizes, and
-  // needs no manual number from anyone. Uses the median gap across all
-  // adjacent pairs (not just the first) so one anomalous reading doesn't
-  // throw off the whole row, and rounds to whole pixels to avoid subpixel
-  // drift between passes.
+  function updateCarbonRoleButtons(slot) {
+    if (!slot.wrapperEl) return;
+
+    const planningBox = slot.wrapperEl.querySelector('[class*="planningTime__"]');
+    if (planningBox) {
+      if (slot.isOpen && slot.chance !== null && slot.requirement !== undefined) {
+        planningBox.classList.add("tt2p-delta-box");
+        const diff = slot.chance - slot.requirement;
+        const diffText = diff > 0 ? `+${diff}` : diff < 0 ? `−${-diff}` : "±0";
+
+        let deltaEl = planningBox.querySelector(".tt2p-cpr-delta");
+        if (!deltaEl) {
+          deltaEl = document.createElement("b");
+          deltaEl.className = "tt2p-cpr-delta";
+          planningBox.appendChild(deltaEl);
+        }
+        deltaEl.textContent = diffText;
+        deltaEl.classList.toggle("tt2p-cpr-delta-bad", diff < 0);
+
+        planningBox.removeAttribute("title");
+      } else {
+        planningBox.classList.remove("tt2p-delta-box");
+        const deltaEl = planningBox.querySelector(".tt2p-cpr-delta");
+        if (deltaEl) deltaEl.remove();
+        planningBox.removeAttribute("title");
+      }
+    }
+
+    if (slot.joinBtnEl) {
+      if (slot.qualifies === false) {
+        slot.joinBtnEl.classList.add("tt2p-join-disabled");
+        slot.joinBtnEl.title = `Your CPR ${slot.chance} is below the Faction minimum of ${slot.requirement} for ${slot.roleName}`;
+      } else {
+        slot.joinBtnEl.classList.remove("tt2p-join-disabled");
+        if (slot.joinBtnEl.title && slot.joinBtnEl.title.startsWith("Your CPR ")) {
+          slot.joinBtnEl.removeAttribute("title");
+        }
+      }
+    }
+  }
+
   function measureRoleLayout(slots) {
     const rects = slots.map((s) => (s.wrapperEl ? s.wrapperEl.getBoundingClientRect() : null));
     const knownWidths = rects.filter((r) => r && r.width > 0).map((r) => r.width);
@@ -1542,75 +1835,139 @@
     return { widths, gap };
   }
 
-  // Single-row "OC Timeline" strip, inserted BETWEEN the description and the
-  // roles grid (not below everything) — one segment per role, using the same
-  // flex layout as Torn's own roles row so each segment lines up above its
-  // matching role box. Green/complete, blue/active (filled to actual %),
-  // grey/idle ("Starts in Xh"), orange-red/idle + past the crowding
-  // threshold, dim/"Open" for genuinely unclaimed roles.
   function renderTimelineStrip(cardEl, info) {
+    const descEl = cardEl.querySelector('p[class*="description__"]');
+    const headerParent = cardEl.querySelector('p[class*="panelTitle__"]')?.closest('div[class*="panel__"]') || cardEl.firstElementChild;
     const rolesContainer = info.slots[0]?.wrapperEl?.parentElement || null;
     if (!rolesContainer || !rolesContainer.parentElement) return;
+
+    if (descEl) {
+      descEl.style.display = hideFlavorText ? "none" : "";
+    }
+
+    let topBentoContainer = cardEl.querySelector(".tt2p-top-bento-container");
+    if (!topBentoContainer) {
+      topBentoContainer = document.createElement("div");
+      topBentoContainer.className = "tt2p-top-bento-container";
+    }
+
+    if (hideFlavorText) {
+      if (descEl && descEl.parentElement) {
+        if (topBentoContainer.previousElementSibling !== descEl) {
+          descEl.after(topBentoContainer);
+        }
+      } else if (headerParent && topBentoContainer.parentElement !== headerParent) {
+        headerParent.appendChild(topBentoContainer);
+      }
+    } else {
+      if (descEl && descEl.parentElement) {
+        if (topBentoContainer.previousElementSibling !== descEl) {
+          descEl.after(topBentoContainer);
+        }
+      } else if (headerParent && topBentoContainer.parentElement !== headerParent) {
+        headerParent.appendChild(topBentoContainer);
+      }
+    }
 
     let strip = cardEl.querySelector(".tt2p-timeline-strip");
     if (!strip) {
       strip = document.createElement("div");
       strip.className = "tt2p-timeline-strip";
     }
-    // Keep it pinned as the sibling immediately BEFORE the roles row, even
-    // after a Torn re-render.
     if (strip.nextElementSibling !== rolesContainer) {
       rolesContainer.parentElement.insertBefore(strip, rolesContainer);
     }
 
-    // Torn's roles row has its own internal left padding before the first
-    // role box starts — measure it live so our strip lines up with it
-    // exactly, instead of guessing a fixed indent.
+    // Tag the real roles container so CSS can neutralise its native top line
+    rolesContainer.classList.add("tt2p-roles-container");
+    rolesContainer.style.setProperty("border-top", "none", "important");
+    rolesContainer.style.setProperty("box-shadow", "none", "important");
+
+    // Header success-chance % (top right): normal weight + Inter for crisper text
+    cardEl.querySelectorAll('[class*="successChance__"], [class*="panel__"] span, [class*="panel__"] div').forEach((el) => {
+      if (el.children.length > 0) return;
+      if (el.closest('button[class*="slotHeader__"]')) return;
+      if (!/^\d+(\.\d+)?%$/.test(el.textContent.trim())) return;
+      el.style.setProperty("font-weight", "400", "important");
+      el.style.setProperty("font-family", "'Inter', Arial, sans-serif", "important");
+    });
+
     const rolesRect = rolesContainer.getBoundingClientRect();
     const firstSlotRect = info.slots[0]?.wrapperEl?.getBoundingClientRect();
     const leftOffset = firstSlotRect ? Math.max(0, Math.round(firstSlotRect.left - rolesRect.left)) : 0;
 
     const occupied = info.slots.filter((s) => s.hasOccupant);
-    const completeCount = occupied.filter((s) => s.planningState === "complete").length;
     const activePlanner = occupied.find((s) => s.planningState === "in_progress");
 
+    const rolesFilledText = `${info.occupiedCount} / ${info.totalSlots}`;
+    const currentlyPlanningText = activePlanner ? `${activePlanner.roleName} (${(activePlanner.planningPct || 0).toFixed(0)}%)` : (info.occupiedCount === 0 ? "Not Started" : "Waiting");
+    const nextStartText = activePlanner ? formatHM(activePlanner.timelineRemainingHours || 0) : (info.idleCount > 0 ? "~" + formatDuration(info.nextJoinerWaitHours || 0) : "N/A");
+    const timeRoleNeededText = info.idleCount > 0 || info.occupiedCount < info.totalSlots ? `~${formatDuration(info.nextJoinerWaitHours || 0)}` : "Fully Staffed";
+
+    let warningText = "-";
+    let warningClass = "tt2p-bento-tile";
+    let warningTooltip = "";
+
+    if (info.stalled) {
+      warningText = "⚠️ OC Stalled!";
+      warningClass = "tt2p-bento-tile tt2p-bento-danger";
+      warningTooltip = "This OC is frozen because a member is missing an item or paused.";
+    } else if (info.blockedCount > 0) {
+      warningText = `⚠️ ${info.blockedCount} Missing Items`;
+      warningClass = "tt2p-bento-tile tt2p-bento-warning";
+      warningTooltip = `${info.blockedCount} role(s) are missing items that will impact initiation of OC. Loan items from Armory where needed.`;
+    } else if (info.crowded) {
+      warningText = "⚠️ Busy (Idle queue)";
+      warningClass = "tt2p-bento-tile tt2p-bento-warning";
+      warningTooltip = "Quite a few people waiting to start planning, +36-48h wait. Consider starting up similar OC, or one that is close to stalling.";
+    }
+
+    const bentoHtml = `
+      <div class="tt2p-bento-grid">
+        <div class="tt2p-bento-tile">
+          <span class="tt2p-bento-label">Roles Filled:</span>
+          <b class="tt2p-bento-val">${rolesFilledText}</b>
+        </div>
+        <div class="tt2p-bento-tile tt2p-bento-active">
+          <span class="tt2p-bento-label">Currently Planning:</span>
+          <b class="tt2p-bento-val">${escapeHtml(currentlyPlanningText)}</b>
+        </div>
+        <div class="tt2p-bento-tile">
+          <span class="tt2p-bento-label">Next Role Starts in:</span>
+          <b class="tt2p-bento-val">${escapeHtml(nextStartText)}</b>
+        </div>
+        <div class="tt2p-bento-tile" title="Look to join crimes that need members in 24-36h; 2d max. Exceptions include Hostile Takeover, Ace in the Hole. If longer than this: Startup a similar OC or join one close to stalling">
+          <span class="tt2p-bento-label">Needs 1 to Join In:</span>
+          <b class="tt2p-bento-val">${escapeHtml(timeRoleNeededText)}</b>
+        </div>
+        <div class="${warningClass}" ${warningTooltip ? `title="${escapeHtml(warningTooltip)}"` : ""}>
+          <span class="tt2p-bento-label">Status Warning:</span>
+          <b class="tt2p-bento-val" style="text-align: center;">${escapeHtml(warningText)}</b>
+        </div>
+      </div>
+    `;
+    if (topBentoContainer.__tt2pHtml !== bentoHtml) {
+      topBentoContainer.innerHTML = bentoHtml;
+      topBentoContainer.__tt2pHtml = bentoHtml;
+    }
+
     const crimeId = cardEl.getAttribute("data-oc-id") || "";
-    const lvlText = info.difficulty !== null ? `Lv. ${info.difficulty}` : "";
-    const pinPrefix = info.viewerJoined ? "\u{1F4CC} " : "";
-    const idLvlName = `${pinPrefix}${crimeId ? `#${escapeHtml(crimeId)}  |  ` : ""}${lvlText ? `${lvlText}  ` : ""}${escapeHtml(info.crimeName)}`;
+    const lvlText = info.difficulty !== null ? `Difficulty: Lv. ${info.difficulty}` : "";
+    const pinPrefix = info.viewerJoined ? "📌 " : '<span style="visibility:hidden" aria-hidden="true">⏳ </span>';
+    const idLvlName = `${pinPrefix}${crimeId ? `crimeID #${escapeHtml(crimeId)}` : ""}${lvlText ? ` | ${lvlText}` : ""}`;
 
-    let detailsStr = "";
-    if (activePlanner) {
-      detailsStr += `  \u2014  Currently Planning: ${escapeHtml(activePlanner.roleName)}  \u2014  Completed ${(activePlanner.planningPct || 0).toFixed(0)}%, ${formatHM(activePlanner.timelineRemainingHours || 0)} remaining until next role.`;
-    }
-    const trailingParts = [`${completeCount}/${info.totalSlots} Roles Complete`];
-    if (info.idleCount > 0) {
-      trailingParts.push(`Next member needed in ~${formatDuration(info.nextJoinerWaitHours || 0)}`);
-    }
-    if (info.blockedCount > 0) {
-      trailingParts.push(`\u26A0\uFE0F ${info.blockedCount} possibly blocked (missing item?)`);
-    }
-    detailsStr += `  |  ${trailingParts.join("  |  ")}`;
-
-    // Time-until-stall row: reuses the same queue math as "next member
-    // needed" when there's still an open/unclaimed slot (once the queue
-    // reaches that empty slot with nobody there, it stalls). If every slot
-    // is already occupied, there's no open-slot stall risk to project from
-    // current data.
     let stallRowHtml;
     if (info.stalled) {
-      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-warn" style="padding-left:${leftOffset}px;">\u23F3 Time until stall: <b>${formatHMS(0)}</b> \u2014 Already stalled, needs action now.</div>`;
+      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-warn" style="padding-left:${leftOffset}px;">⏳ Time until stall: <b>${formatHMS(0)}</b> — Already stalled, needs action now.</div>`;
     } else if (info.occupiedCount === 0) {
-      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-uninitiated" style="padding-left:${leftOffset}px;">\u{1F550} Uninitiated OC: waiting for 1 member to join to begin planning. If this is near the top, there's no other options, or your looking to spread out--> start it up.</div>`;
+      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-uninitiated" style="padding-left:${leftOffset}px;">⏱️ Uninitiated OC: waiting for 1 member to join to begin planning.</div>`;
     } else if (info.totalSlots - info.occupiedCount > 0) {
       const hoursLeft = info.nextJoinerWaitHours || 0;
       const isThreat = hoursLeft < NEAR_STALL_THRESHOLD_HOURS;
-      const verdict = isThreat
-        ? "\u26A0\uFE0F Threat \u2014 sub-24h, if you qualify consider joining"
-        : "Minimum stall threat, \u2014 consider joining/starting another OC";
-      stallRowHtml = `<div class="tt2p-tl-stall-row${isThreat ? " tt2p-tl-stall-warn" : ""}" style="padding-left:${leftOffset}px;">\u23F3 Time until stall: <b>${formatHMS(hoursLeft)}</b> \u2014 ${verdict}</div>`;
+      const verdict = isThreat ? "⚠️ Sub-24h threat, consider joining" : "Low stall threat";
+      stallRowHtml = `<div class="tt2p-tl-stall-row${isThreat ? " tt2p-tl-stall-warn" : ""}" style="padding-left:${leftOffset}px;">⏳ Time until stall: <b>${formatHMS(hoursLeft)}</b> — ${verdict}</div>`;
     } else {
-      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-ok" style="padding-left:${leftOffset}px;">\u2705 Fully staffed \u2014 no stall risk from open roles right now.</div>`;
+      stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-ok" style="padding-left:${leftOffset}px;">✅ Fully staffed — no stall risk right now.</div>`;
     }
 
     let barsHtml = "";
@@ -1649,30 +2006,31 @@
       barsHtml += `<div class="tt2p-tl-seg ${segClass}${posClass}" style="flex:0 0 ${w}px;width:${w}px;"><div class="tt2p-tl-seg-fill" style="width:${fillPct}%"></div><span class="tt2p-tl-seg-label">${label}</span></div>`;
     });
 
-    strip.innerHTML = `
-      <div class="tt2p-tl-strip-header" style="padding-left:${leftOffset}px;">
-        <span class="tt2p-tl-strip-title">\u{1F551} ${idLvlName}</span><span class="tt2p-tl-strip-details${info.crowded ? " tt2p-summary-warn" : ""}">${detailsStr}</span>
+    const headerOffset = Math.max(0, leftOffset + 2);
+
+    const stripHtml = `
+      <div class="tt2p-tl-strip-header" style="padding-left:${headerOffset}px;">
+        <span class="tt2p-tl-strip-title">${idLvlName}</span>
       </div>
       ${stallRowHtml}
       <div class="tt2p-tl-strip-bars" style="gap:${gap}px;padding-left:${leftOffset}px;">${barsHtml}</div>
     `;
+    if (strip.__tt2pHtml !== stripHtml) {
+      strip.innerHTML = stripHtml;
+      strip.__tt2pHtml = stripHtml;
+    }
   }
 
-  // Two distinct visual cues, shown at most one at a time (stalled wins if
-  // somehow both are true, since that's the more urgent case):
-  //   - stalled  -> Torn's own "paused" indicator, the whole OC is frozen.
-  //   - crowded  -> still actively ticking, but too many people are parked
-  //                 at 0% waiting for their turn to plan.
   function updateStatusBadge(cardEl, info) {
     let badge = cardEl.querySelector(".tt2p-status-badge");
     let text = null;
     let variant = null;
 
     if (info.stalled) {
-      text = "\u{1F534} STALLED \u2014 needs someone to pick up planning";
+      text = "🔴 STALLED — needs planning action";
       variant = "stalled";
     } else if (info.crowded) {
-      text = `\u{1F6A6} Busy \u2014 ${info.idleCount} member${info.idleCount === 1 ? "" : "s"} waiting to start planning. Msg the last 1-2 ppl to join (furthest right) to move or start up new oc if you see em online \u{1F6A6}`;
+      text = `🚦 Busy — ${info.idleCount} member(s) waiting to start planning.`;
       variant = "crowded";
     }
 
@@ -1693,27 +2051,20 @@
     badge.classList.toggle("tt2p-status-crowded", variant === "crowded");
   }
 
-  /* ============================================================================
-   * Main pass
-   * ============================================================================ */
   let isMutatingSelf = false;
-  // Captures the page's own native order the first time we ever see it, so
-  // "dynamic sort OFF" can restore a true vanilla view instead of just
-  // freezing whatever order we'd already rearranged things into.
   let originalCardOrder = null;
 
-  // If the member currently has one of Torn's own native dropdown/action
-  // menus open (View Profile / Remove from Role / etc — Torn tracks this via
-  // data-is-tooltip-opened="true" on the triggering element), we skip the
-  // ENTIRE pass. Any DOM write we make anywhere on the page — even
-  // completely unrelated to the open menu — risks Torn's React re-rendering
-  // that subtree and silently closing it out from under the member mid-click.
   function nativeMenuIsOpen() {
     return !!document.querySelector('[data-is-tooltip-opened="true"]');
   }
 
+  function onCrimesTab() {
+    return window.location.hash.includes("tab=crimes");
+  }
+
   function runPass() {
     if (document.hidden) return;
+    if (!onCrimesTab()) return;
     if (isMutatingSelf) return;
     if (nativeMenuIsOpen()) return;
 
@@ -1728,12 +2079,9 @@
     ensureSortTogglePill(container);
     ensureStarLegend(container);
 
-    // Always keep CPR capture + weight boxes + tooltips running (informational
-    // only, doesn't touch layout/order), even with dynamic sort switched off.
     const store = loadStore();
     let storeDirty = false;
     const toastMessages = [];
-
     const cardInfos = [];
 
     cards.forEach((cardEl) => {
@@ -1744,6 +2092,8 @@
 
       let cardQualifies = false;
 
+      processSuccessBadge(cardEl, info);
+
       info.slots.forEach((slot) => {
         if (!slot.roleName) return;
 
@@ -1751,13 +2101,15 @@
           const result = recordCpr(store, info.crimeName, slot.roleName, slot.chance);
           if (result.changed) {
             storeDirty = true;
-            const prevText = result.previous === null ? "new" : `${result.previous} \u2192`;
-            toastMessages.push(`${info.crimeName} \u2014 ${slot.roleName}: ${prevText} ${slot.chance}`);
+            const prevText = result.previous === null ? "new" : `${result.previous} →`;
+            toastMessages.push(`${info.crimeName} — ${slot.roleName}: ${prevText} ${slot.chance}`);
           }
         }
 
         attachTooltip(slot, info.crimeName, info.tracked);
-        injectWeightBox(slot);
+        injectTidyWeightBox(slot, info.crimeName);
+        injectRoleProgressBar(slot);
+        updateCarbonRoleButtons(slot);
         upsertStarBadge(slot);
 
         if (slot.hasOccupant) {
@@ -1771,13 +2123,9 @@
             if (slot.isOpen) cardQualifies = true;
           } else if (slot.qualifies === false) {
             slot.wrapperEl.classList.add("tt2p-role-bad");
-            if (slot.isOpen && slot.joinBtnEl) {
-              slot.joinBtnEl.classList.add("tt2p-join-disabled");
-            }
           }
         } else if (!dynamicSortEnabled && slot.wrapperEl) {
           slot.wrapperEl.classList.remove("tt2p-role-good", "tt2p-role-bad");
-          if (slot.joinBtnEl) slot.joinBtnEl.classList.remove("tt2p-join-disabled");
         }
       });
 
@@ -1818,16 +2166,10 @@
     const cardInfoByEl = new Map(cardInfos.map(({ cardEl, info }) => [cardEl, info]));
 
     cardInfos.forEach(({ cardEl, info }) => {
-      // Crimes the faction never runs (e.g. Manifest Cruelty) are hidden by
-      // default — "out of sight, out of mind" — unless the member has
-      // switched on "Show hidden OCs" in the gear panel.
       if (HIDDEN_CRIMES_BY_DEFAULT.includes(info.crimeName) && !showHiddenOcs) {
         cardEl.style.display = "none";
         return;
       }
-
-      // Hard faction policy: members capped below this crime's difficulty
-      // don't see it at all (not even in the "not qualified" bucket).
       if (info.difficulty !== null && info.difficulty > maxDifficultyLevel) {
         cardEl.style.display = "none";
         return;
@@ -1844,29 +2186,6 @@
       }
     });
 
-    // Priority order among OCs you qualify for, modeled on the member
-    // decision tree. Two modes:
-    //
-    // NORMAL member: urgency-first across everything —
-    //   0: Stalled, 1: Near-stall-urgent, 2: Vacant, 3: Everything else.
-    //
-    // LEVEL-9-CAPABLE member (their stored CPR history clears a Level 9
-    // role's requirement, checked via computeLevel9Capable() below): the
-    // decision tree says they should exhaust Level 9 options FIRST — stalled,
-    // then urgent, then vacant — before dropping down to Break the Bank
-    // (their explicit named fallback) and repeating the same three checks
-    // there, and only THEN falling into the general pool everyone else uses:
-    //   0: Level 9 stalled       3: Break the Bank stalled
-    //   1: Level 9 near-stall    4: Break the Bank near-stall
-    //   2: Level 9 vacant        5: Break the Bank vacant
-    //   6: Everything else (general urgency-first pool, same as normal mode)
-    //
-    // Within any bucket, and always within bucket 6, difficulty (then crime
-    // importance, then the bucket-specific tiebreak) still applies — see
-    // urgencySubRank()/crimeImportanceIndex() below.
-    // NOTE: this still doesn't check what OC the member is ALREADY
-    // committed to elsewhere on the page — that's the one remaining piece
-    // of the decision tree we haven't built.
     const level9Capable = computeLevel9Capable();
 
     function urgencySubRank(info) {
@@ -1915,17 +2234,8 @@
       return infoA.occupiedCount - infoB.occupiedCount;
     });
 
-    // Aspirational ordering for the "not qualified" bucket too — hardest
-    // tier first, so the OCs worth working toward show up before ones that
-    // barely register.
     visibleNotQualified.sort((a, b) => (readDifficulty(b) ?? -1) - (readDifficulty(a) ?? -1));
 
-    // Pin anything the viewer has personally joined to the very top of the
-    // whole list, above every other bucket — detected via Torn's own "Leave
-    // Role" label, which only appears on the viewer's own slot. Pulled out
-    // of BOTH the qualified and not-qualified arrays (a joined OC is
-    // relevant regardless of whether it'd otherwise "qualify"), keeping
-    // their existing relative order from the sorts above.
     const pinnedCards = [];
     const remainingQualified = [];
     visibleQualified.forEach((el) => {
@@ -1938,18 +2248,14 @@
       else remainingNotQualified.push(el);
     });
 
-    // Special-case the #1 recommendation: if it's a completely fresh OC
-    // (nobody's joined at all), swap its stall-row message for one that
-    // explains why it's on top and points at the star ratings. Scoped to
-    // the top of the REMAINING (non-pinned) list, since a pinned OC always
-    // has at least the viewer in it and this message is specifically about
-    // OCs you haven't joined yet.
     const topCardInfo = remainingQualified.length ? cardInfoByEl.get(remainingQualified[0]) : null;
     if (topCardInfo && topCardInfo.occupiedCount === 0) {
       const topStallRow = remainingQualified[0].querySelector(".tt2p-tl-stall-row");
       if (topStallRow) {
         topStallRow.className = "tt2p-tl-stall-row tt2p-tl-stall-top-pick";
-        topStallRow.innerHTML = `\u2B50 This OC is your top recommendation \u2014 nobody's started it yet. Please pick your highest-impact role (see the star ratings below).`;
+        const topStrip = topStallRow.closest(".tt2p-timeline-strip");
+        if (topStrip) topStrip.__tt2pHtml = null;
+        topStallRow.innerHTML = `⭐ Top recommendation — unstarted OC. Pick your highest-impact role (see star ratings below).`;
       }
     }
 
@@ -1990,12 +2296,6 @@
     let divider = document.getElementById(NOT_QUALIFIED_HEADER_ID);
     const needDivider = notQualifiedCards.length > 0;
 
-    // Only move DOM nodes when the resulting order would actually differ.
-    // appendChild() on an already-attached element still detaches/reattaches
-    // it even if it ends up in the same spot — and that's enough to close
-    // any native dropdown/menu the member has open inside that card. Most
-    // passes don't actually change anything, so this skips the DOM entirely
-    // most of the time.
     const desiredIds = qualifiedCards.map((c) => c.dataset.ocId);
     if (needDivider) desiredIds.push("__DIVIDER__");
     desiredIds.push(...notQualifiedCards.map((c) => c.dataset.ocId));
@@ -2023,7 +2323,7 @@
       if (!divider) {
         divider = document.createElement("div");
         divider.id = NOT_QUALIFIED_HEADER_ID;
-        divider.textContent = "\u26A0\uFE0F OCs Not Yet Qualified For";
+        divider.textContent = "⚠️ OCs Not Yet Qualified For";
       }
       container.appendChild(divider);
       notQualifiedCards.forEach((el) => container.appendChild(el));
@@ -2036,9 +2336,6 @@
     });
   }
 
-  /* ============================================================================
-   * Observer setup
-   * ============================================================================ */
   function debounce(fn, ms) {
     let t = null;
     return (...args) => {
@@ -2047,94 +2344,96 @@
     };
   }
 
-  // Fires on every visibility change; harmless no-op while hidden since
-  // runPass() itself checks document.hidden. Registered once globally rather
-  // than once per setupObserver() call, since the crimes tab can be
-  // entered/left/re-entered many times in a session.
   let latestDebouncedPass = null;
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && latestDebouncedPass) latestDebouncedPass();
   });
 
+  let activeObserver = null;
+  let observedNode = null;
+
+  function stopObserver() {
+    if (activeObserver) {
+      activeObserver.disconnect();
+      activeObserver = null;
+    }
+    observedNode = null;
+    latestDebouncedPass = null;
+  }
+
   function setupObserver(root) {
-    const debouncedPass = debounce(runPass, SCAN_DEBOUNCE_MS);
+    stopObserver();
+    const debouncedPass = debounce(() => {
+      runPass();
+      // Our own DOM writes during the pass must not re-trigger another pass
+      if (activeObserver) activeObserver.takeRecords();
+    }, SCAN_DEBOUNCE_MS);
     latestDebouncedPass = debouncedPass;
 
-    const observer = new MutationObserver(() => {
+    activeObserver = new MutationObserver(() => {
       if (isMutatingSelf) return;
       debouncedPass();
     });
-
-    observer.observe(root, { childList: true, subtree: true });
-
+    observedNode = root;
+    activeObserver.observe(root, { childList: true, subtree: true });
     debouncedPass();
-
-    return observer;
   }
 
-  function waitForRoot(selector, cb, timeoutMs = 15000) {
+  // Waits for the root; cancellable so stale waits never pile up
+  let pendingWait = null;
+  function cancelWait() {
+    if (pendingWait) {
+      clearInterval(pendingWait);
+      pendingWait = null;
+    }
+  }
+  function waitForRoot(selector, cb, timeoutMs = 60000) {
+    cancelWait();
     const existing = document.querySelector(selector);
     if (existing) return cb(existing);
     const start = Date.now();
-    const interval = setInterval(() => {
+    pendingWait = setInterval(() => {
+      if (!onCrimesTab()) return cancelWait();
       const el = document.querySelector(selector);
       if (el) {
-        clearInterval(interval);
+        cancelWait();
         cb(el);
       } else if (Date.now() - start > timeoutMs) {
-        clearInterval(interval);
+        cancelWait();
       }
     }, 300);
   }
 
-  /* ============================================================================
-   * Init
-   *
-   * Torn's faction page is a single-page app: switching between Crimes,
-   * Armoury, the faction overview, etc. updates the URL hash rather than
-   * doing a full page load/navigation. A plain "wait for #faction-crimes-root
-   * once at script start" init only works for members who land directly on
-   * the Crimes tab — anyone who starts elsewhere in factions.php and clicks
-   * over to Crimes afterward would never get the script running, since
-   * #faction-crimes-root doesn't exist in the DOM until that tab is actually
-   * opened. Watching hashchange (plus a check on load, for anyone who does
-   * land directly on the Crimes tab/deep-link) covers both cases.
-   * ============================================================================ */
   injectStyles();
   ensureGearUi();
 
-  let isCrimesTabObserverActive = false;
-  let activeObserver = null;
-
   function initCrimesTab() {
-    if (isCrimesTabObserverActive) return;
+    // Already watching a live, attached node -> nothing to do
+    if (activeObserver && observedNode && observedNode.isConnected) return;
     waitForRoot("#faction-crimes-root", (root) => {
-      // Abort if the member navigated away again while we were waiting for
-      // the tab's content to actually render.
-      if (!window.location.hash.includes("tab=crimes")) return;
-      if (activeObserver) {
-        activeObserver.disconnect();
-        activeObserver = null;
-      }
-      // Fresh tab entry means a fresh render from Torn — the "vanilla order"
-      // snapshot from a previous visit to this tab no longer applies.
+      if (!onCrimesTab()) return;
       originalCardOrder = null;
-      activeObserver = setupObserver(root);
-      isCrimesTabObserverActive = true;
+      // Observe the stable tab panel when available so a replaced root can't orphan us
+      setupObserver(root.closest("#faction-crimes") || root);
     });
   }
 
   function handleRoute() {
-    if (window.location.hash.includes("tab=crimes")) {
+    if (onCrimesTab()) {
       initCrimesTab();
+      loadCrimesHubData();
+      if (latestDebouncedPass) latestDebouncedPass();
     } else {
-      // Reset so re-entering the Crimes tab re-initializes cleanly. Torn's
-      // own router removes #faction-crimes-root when leaving the tab, so
-      // the old observer stops seeing anything relevant regardless; we still
-      // explicitly disconnect it in initCrimesTab() above for tidiness.
-      isCrimesTabObserverActive = false;
+      cancelWait();
+      stopObserver();
     }
   }
+
+  // Self-heal: if Torn swaps the crimes root without a hash change, re-attach
+  setInterval(() => {
+    if (document.hidden || !onCrimesTab()) return;
+    if (!activeObserver || !observedNode || !observedNode.isConnected) initCrimesTab();
+  }, 3000);
 
   window.addEventListener("hashchange", handleRoute);
   handleRoute();
