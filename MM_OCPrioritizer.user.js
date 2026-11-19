@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Mutation OC Prioritizer (WIP)
 // @namespace    jocko.mmocprioritizer
-// @version      1.5.0
-// @description  Faction CPR requirements, role qualification highlighting, role weights/success rates (crimehub). MM themed Red. Localized CPR tracking for members. 100% client side (Browser) storage, nothing external.
+// @version      1.7.0
+// @description  Faction CPR requirements, role qualification highlighting, role weights/success rates (crimehub), a planning progress bar, and a Prioritizer tab with your OC situation, pipeline and CPR by level. MM themed Red. 100% client side (browser) storage, nothing external.
 // @match        https://www.torn.com/factions.php*
 // @run-at       document-end
 // @downloadURL  https://github.com/Norm2390/MonarchScripts/raw/refs/heads/main/MM_OCPrioritizer.user.js
@@ -17,11 +17,7 @@
 /*
  * ============================================================================
  * PROPRIETARY — Mutation faction internal tool. Not open source, not for
- * public/collaborative use or redistribution. 
- *
- * Only Storage is on users local browser; deletable through user settings sidebar. crimeshub is only to calculate win/loss probability based on in browser data; no data is being uploaded or sent anywhere. 100% browser, client side.
- *
- * role weights + crime success estimation/probability from crimeHub
+ * public/collaborative use or redistribution.
  *
  * This script is built specifically for Mutation members to help organize
  * and prioritize the faction's OC cards. Do not copy, fork, re-host,
@@ -427,6 +423,10 @@
   const SHOW_HIDDEN_KEY = "tornOC_prioritizer_showHiddenOcs_v1";
   const HIDE_FLAVOR_KEY = "tornOC_prioritizer_hideFlavorText_v1";
   const NOT_QUALIFIED_HEADER_ID = "tt2p-not-qualified-divider";
+  const BAR_STYLE_KEY = "tornOC_prioritizer_barStyle_v1";
+  function getBarStyle() {
+    return localStorage.getItem(BAR_STYLE_KEY) === "classic" ? "classic" : "density";
+  }
   const DEFAULT_MAX_DIFFICULTY = 10;
 
   let maxDifficultyLevel = (() => {
@@ -711,15 +711,11 @@
     updateTogglePillUi();
   }
 
-  function ensureGearUi() {
-    if (document.getElementById("tt2p-gear-btn")) return;
+  let settingsPanelEl = null;   // built once, lives inside the 4th crimes tab
+  let settingsTabOpen = false;
 
-    const gear = document.createElement("button");
-    gear.id = "tt2p-gear-btn";
-    gear.type = "button";
-    gear.title = "Mutation OC Prioritizer settings";
-    gear.innerHTML = `<span class="tt2p-gear-icon">⚙️</span><span class="tt2p-gear-label">Mutation Prioritizer</span>`;
-    document.body.appendChild(gear);
+  function buildSettingsPanel() {
+    if (settingsPanelEl) return;
 
     const panel = document.createElement("div");
     panel.id = "tt2p-settings-panel";
@@ -739,8 +735,15 @@
       <div class="tt2p-settings-row" style="margin-top:6px;">
         <label class="tt2p-settings-checkbox-label">
           <input id="tt2p-hide-flavor-input" type="checkbox" ${hideFlavorText ? "checked" : ""} />
-          Hide OC Flavor Text, [Leaves only info boxes]
+          Hide OC flavor text (places Bento directly in header)
         </label>
+      </div>
+      <div class="tt2p-settings-row" style="margin-top:10px;">
+        <label for="tt2p-barstyle-select">Planning bar style:</label>
+        <select id="tt2p-barstyle-select">
+          <option value="density" ${getBarStyle() === "density" ? "selected" : ""}>Progress line (new)</option>
+          <option value="classic" ${getBarStyle() === "classic" ? "selected" : ""}>Classic arrows</option>
+        </select>
       </div>
       <div class="tt2p-settings-header" style="margin-top:14px;">CPR Data</div>
       <div class="tt2p-tabs">
@@ -759,7 +762,8 @@
       </div>
       <button id="tt2p-purge-btn" type="button">Purge All CPR Data</button>
     `;
-    document.body.appendChild(panel);
+
+    settingsPanelEl = panel;
 
     panel.querySelectorAll(".tt2p-tab-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -773,17 +777,6 @@
     });
 
     panel.querySelector("#tt2p-growth-range").addEventListener("change", renderGrowthPanel);
-
-    gear.addEventListener("click", () => {
-      panel.classList.toggle("tt2p-open");
-      if (panel.classList.contains("tt2p-open")) {
-        const gearRect = gear.getBoundingClientRect();
-        panel.style.top = `${Math.round(gearRect.bottom + 10)}px`;
-        panel.style.bottom = "auto";
-        renderSettingsPanel();
-        renderGrowthPanel();
-      }
-    });
 
     panel.querySelector("#tt2p-difficulty-save").addEventListener("click", () => {
       const input = document.getElementById("tt2p-difficulty-input");
@@ -807,7 +800,13 @@
     panel.querySelector("#tt2p-hide-flavor-input").addEventListener("change", (e) => {
       hideFlavorText = !!e.target.checked;
       localStorage.setItem(HIDE_FLAVOR_KEY, hideFlavorText ? "1" : "0");
-      showToast(hideFlavorText ? "OC Flavor text hidden." : "OC Flavor text restored.");
+      showToast(hideFlavorText ? "Flavor text hidden; Bento moved into header." : "Flavor text restored; Bento moved below text.");
+      runPass();
+    });
+
+    panel.querySelector("#tt2p-barstyle-select").addEventListener("change", (e) => {
+      localStorage.setItem(BAR_STYLE_KEY, e.target.value === "classic" ? "classic" : "density");
+      showToast(e.target.value === "classic" ? "Planning bar: classic arrows." : "Planning bar: density line.");
       runPass();
     });
 
@@ -819,6 +818,590 @@
         showToast("CPR data purged.");
       }
     });
+  }
+
+  /* ============================================================================
+   * MEMBER DASHBOARD (DOM only: reads the OC cards you have on screen and remembers them)
+   * No faction API, no extra requests, nothing scraped from tabs you are not viewing.
+   * ============================================================================ */
+  const OC_CACHE_KEY = "tornOC_prioritizer_ocCache_v1";
+  const QUEUE_CAP_HOURS = 36;       // longest wait before a new joiner's planning turn we call acceptable
+  const QUEUE_CAP_TOP_HOURS = 72;   // extra leeway for Hostile Takeover / Ace in the Hole (level 9)
+  const OVERFLOW_HOURS = 24;        // idle in a planning queue beyond this = worth moving
+  const LEVEL_DEFAULTS = { "Hostile Takeover": 9, "Ace in the Hole": 9, "Break the Bank": 8, "Ship Happens": 8, "Lock Stock": 8, "Stacking the Deck": 8, "Clinical Precision": 8, "Cleared for Takeoff": 7, "Blast from the Past": 7, "Window of Opportunity": 7 };
+  let lastNativeTab = null;
+
+  function readSlotIdentity(headerEl, wrapperEl, hasOccupant) {
+    const out = { memberName: null, memberId: null, isViewer: false, itemMissing: false };
+    if (!hasOccupant || !wrapperEl) return out;
+    const nameEl = wrapperEl.querySelector('[class*="textName__"]');
+    out.memberName = nameEl && nameEl.textContent ? nameEl.textContent.trim() : null;
+    const link = wrapperEl.querySelector('a[href*="XID="]');
+    const m = link ? /XID=(\d+)/.exec(link.getAttribute("href") || "") : null;
+    out.memberId = m ? parseInt(m[1], 10) : null;
+    out.isViewer = Array.from(wrapperEl.querySelectorAll('[class*="slotMenuItem__"]')).some((el) => el.textContent.trim() === "Leave Role");
+    out.itemMissing = !!headerEl.querySelector('[class*="inactive__"]');
+    return out;
+  }
+
+  function roleWeightOf(crimeName, role) {
+    const wm = ROLE_WEIGHTS[crimeName];
+    if (wm) { const v = normalizeLookup(wm, role); if (v !== undefined) return v; }
+    const c = crimesHubData[norm(crimeName)];
+    if (c && c.roles && c.w) { const k = c.roles[norm(role)]; if (k && c.w[k] !== undefined) return c.w[k]; }
+    return 0;
+  }
+  const dashLevelOf = (c) => c.level || crimeDifficultyCache[c.name] || LEVEL_DEFAULTS[c.name] || 0;
+  const dAbbr = (n) => String(n).split(/\s+/).filter((w) => !/^(the|of|in|a|for|from|to|and|if|me)$/i.test(w)).map((w) => w[0].toUpperCase()).join("");
+  const fmtHrs = (h) => (h <= 0.02 ? "now" : formatHM(h));
+
+  /* ---- what the active tab shows -> compact records, remembered per tab ---- */
+  function currentNativeTab() {
+    const { bar } = crimesTabParts();
+    if (!bar) return null;
+    const b = Array.from(bar.querySelectorAll("button")).find((x) => !x.classList.contains("tt2p-settings-tab-btn") && Array.from(x.classList).some(isActiveCls));
+    const t = b ? b.textContent.trim().toLowerCase() : "";
+    return t.startsWith("recruit") ? "recruiting" : t.startsWith("plan") ? "planning" : t.startsWith("complet") ? "completed" : null;
+  }
+
+  function loadOcCache() { try { return JSON.parse(localStorage.getItem(OC_CACHE_KEY) || "{}"); } catch (e) { return {}; } }
+  let ocCache = loadOcCache();
+  const ocLastJson = {};
+  let ocPersistAt = 0;
+
+  function compactRecord(cardEl, info) {
+    return {
+      id: cardEl.getAttribute("data-oc-id") || info.crimeName,
+      name: info.crimeName, level: info.difficulty, tracked: info.tracked, stalled: info.stalled,
+      filled: info.occupiedCount, total: info.totalSlots,
+      readyIn: info.overallCountdownHours, viewer: info.viewerJoined,
+      slots: info.slots.map((s) => ({
+        role: s.roleName, name: s.memberName, uid: s.memberId, cpr: s.chance, req: s.requirement,
+        open: s.isOpen, occ: s.hasOccupant, st: s.planningState, pct: s.planningPct,
+        me: s.isViewer, qual: s.qualifies, miss: s.itemMissing,
+      })),
+    };
+  }
+  function updateOcCache(tab, cardInfos) {
+    const crimes = cardInfos.map(({ cardEl, info }) => compactRecord(cardEl, info));
+    ocCache[tab] = { at: Date.now(), crimes };
+    const j = JSON.stringify(crimes);
+    if (ocLastJson[tab] !== j || Date.now() - ocPersistAt > 30000) {
+      ocLastJson[tab] = j;
+      ocPersistAt = Date.now();
+      try { localStorage.setItem(OC_CACHE_KEY, JSON.stringify(ocCache)); } catch (e) { /* quota */ }
+    }
+  }
+  function refreshOcCacheFromDom(tab) {
+    if (tab !== "recruiting" && tab !== "planning") return;
+    const infos = findOcCards().map((cardEl) => ({ cardEl, info: readCard(cardEl) })).filter((x) => x.info);
+    if (infos.length) updateOcCache(tab, infos);
+  }
+
+  // members planning in order: the one in progress first, then the queue (24h each); `age` = hours since we last looked
+  function ocSegments(c, age) {
+    const members = c.slots.filter((s) => s.occ && s.st !== "complete");
+    const active = members.filter((s) => s.st === "in_progress").sort((a, b) => (b.pct || 0) - (a.pct || 0));
+    const rest = members.filter((s) => s.st !== "in_progress");
+    const segs = active.concat(rest).map((s) => ({ kind: s.miss ? "blocked" : s.st === "in_progress" ? "active" : "queued", hrs: s.st === "in_progress" ? 24 * (1 - (s.pct || 0) / 100) : 24, s }));
+    let burn = age;
+    for (const sg of segs) { if (burn <= 0) break; const d = Math.min(burn, sg.hrs); sg.hrs -= d; burn -= d; }
+    const out = segs.filter((sg) => sg.hrs > 0.05);
+    return { segs: out, memberHrs: out.reduce((a, sg) => a + sg.hrs, 0), opens: c.slots.filter((s) => s.open) };
+  }
+
+  function ocRecords() {
+    const now = Date.now();
+    const byId = new Map();
+    ["recruiting", "planning"].forEach((tab) => {
+      const t = ocCache[tab];
+      if (!t || !t.crimes) return;
+      const age = (now - t.at) / 3600000;
+      if (age > 24) return;
+      t.crimes.forEach((c) => {
+        if (HIDDEN_CRIMES_BY_DEFAULT.includes(c.name) && !showHiddenOcs) return;
+        const sg = ocSegments(c, age);
+        const full = c.total > 0 && c.filled === c.total;
+        const readyNow = full ? (c.readyIn !== null && c.readyIn !== undefined ? Math.max(0, c.readyIn - age) : sg.memberHrs) : null;
+        const rec = Object.assign({}, c, { tab, age, segs: sg.segs, opens: sg.opens, waitNow: sg.memberHrs, full, readyNow, level: dashLevelOf(c), isMine: !!c.viewer || c.slots.some((s) => s.me) });
+        const prev = byId.get(c.id);
+        if (!prev || rec.age < prev.age) byId.set(c.id, rec);
+      });
+    });
+    return Array.from(byId.values());
+  }
+
+  /* ---- the viewer's own situation ---- */
+  function myWaitInfo(r, me) {
+    if (!me || me.st === "in_progress" || me.st === "complete") return null;
+    const others = r.slots.filter((s) => s.occ && !s.me && s.st !== "complete");
+    const partial = others.filter((s) => s.st === "in_progress").reduce((a, s) => a + 24 * (1 - (s.pct || 0) / 100), 0);
+    const zeros = others.filter((s) => s.st !== "in_progress").length;
+    const sub = (v) => Math.max(0, v - r.age);
+    return { est: sub(partial + 12 * zeros), min: sub(partial), max: sub(partial + 24 * zeros) };
+  }
+  const isTop = (r) => LEVEL9_CRIMES.includes(r.name) || r.level >= 9;
+
+  function joinOptions(recs, mine, myWait) {
+    const out = [];
+    const curIdx = mine ? crimeImportanceIndex(mine.name) : 0;
+    recs.forEach((r) => {
+      if (r.isMine || !r.tracked || !r.opens.length) return;
+      const cap = isTop(r) ? QUEUE_CAP_TOP_HOURS : QUEUE_CAP_HOURS;
+      if (r.waitNow > cap) return;
+      r.opens.forEach((s) => {
+        if (s.qual !== true) return;
+        const tIdx = crimeImportanceIndex(r.name);
+        const dir = !mine ? 1 : tIdx < curIdx ? 0 : tIdx === curIdx ? 1 : 2;
+        if (mine && myWait) {
+          if (r.waitNow > myWait.est - 12) return;
+          if (dir === 2 && (myWait.est < 36 || isTop(mine))) return;
+        }
+        out.push({ r, s, start: r.waitNow, dir, tIdx, w: roleWeightOf(r.name, s.role) });
+      });
+    });
+    out.sort((a, b) => a.dir - b.dir || a.tIdx - b.tIdx || a.start - b.start || b.w - a.w);
+    return out.slice(0, 4);
+  }
+
+  function optionsHtml(opts) {
+    if (!opts.length) return `<div class="tt2p-mgr-note">No open role you qualify for looks better right now.</div>`;
+    return `<ul class="tt2p-mgr-lines">${opts.map((o) => {
+      const tag = o.dir === 0 ? `<span class="tt2p-mgr-ok">&#8593; higher priority</span>` : o.dir === 1 ? "" : `<span class="tt2p-mgr-warn">&#8595; lower priority</span>`;
+      return `<li><b>${escapeHtml(o.r.name)}</b> &middot; ${escapeHtml(o.s.role)} <span class="tt2p-mgr-dim">(your CPR ${o.s.cpr}/${o.s.req})</span> &mdash; your planning turn would come in ~${fmtHrs(o.start)} ${tag}</li>`;
+    }).join("")}</ul>`;
+  }
+
+  function dashSituation(recs) {
+    const warnings = [];
+    const mine = recs.find((r) => r.isMine) || null;
+    const me = mine ? mine.slots.find((s) => s.me) || null : null;
+    let options = [];
+    if (!recs.length) {
+      warnings.push({ sev: "info", title: "No OC data yet", cause: "Open the Recruiting tab (and the Planning tab if you are in a planning OC) once: this dashboard only uses what is on your screen and remembers it for later.", view: null });
+      return { mine, me, warnings, options };
+    }
+    if (mine && me) {
+      const item = cachedItem(mine.id + ":" + me.role);
+      if (me.miss) warnings.push({ sev: "bad", title: `You are missing the item for ${escapeHtml(me.role)} in ${escapeHtml(mine.name)}`, cause: item && item.text ? `Missing: <b>${escapeHtml(item.text)}</b>. Your planning cannot progress until you have it.` : "Your planning cannot progress until you have the required item (hover your role to see which one).", action: "Get or borrow the item (faction armoury) so your part can start.", view: "ocs" });
+      if (mine.stalled) warnings.push({ sev: "bad", title: `${escapeHtml(mine.name)} is stalled`, cause: "Planning is paused: someone is missing an item or the queue has run out of people to plan.", action: "Check the OC in the OC list and get the blocker fixed.", view: "ocs" });
+      const w = myWaitInfo(mine, me);
+      const thr = isTop(mine) ? QUEUE_CAP_TOP_HOURS : OVERFLOW_HOURS;
+      options = joinOptions(recs, mine, w);
+      if (w && !me.miss && w.est > thr) {
+        warnings.push({ sev: "warn", title: `Your planning turn in ${escapeHtml(mine.name)} is far away`, cause: `You are in the queue and your turn is roughly <b>${fmtHrs(w.est)}</b> away (between ${fmtHrs(w.min)} and ${fmtHrs(w.max)}; Torn does not show join order). Waiting this long is idle time.`, action: options.length ? "Better places for you right now:" : "Nothing better is open right now; stay put unless something appears.", extra: optionsHtml(options), view: "ocs" });
+      }
+      const req = me.req;
+      if (req !== undefined && me.cpr > 0 && me.cpr < req - LENIENCY) warnings.push({ sev: "info", title: `Your CPR for ${escapeHtml(me.role)} is below the requirement`, cause: `${me.cpr} vs ${req} required in ${escapeHtml(mine.name)}.`, action: "Worth reviewing whether another role fits you better.", view: "cpr" });
+      if (!warnings.some((x) => x.sev === "bad" || x.sev === "warn")) {
+        const state = me.st === "complete" ? "your part is done" : me.st === "in_progress" ? `you are planning now (${Math.round(me.pct || 0)}%)` : "you are queued to plan";
+        warnings.unshift({ sev: "good", title: `You are in ${escapeHtml(mine.name)} as ${escapeHtml(me.role)}`, cause: `${state}${mine.readyNow !== null ? "; the OC finishes in about " + fmtHrs(mine.readyNow) : mine.opens.length ? "; " + mine.opens.length + " role(s) still open" : ""}.`, view: "ocs" });
+      }
+    } else {
+      options = joinOptions(recs, null, null);
+      warnings.push({ sev: options.length ? "info" : "warn", title: "You are not in an OC", cause: options.length ? "These are your best open roles right now (higher priority first, then the shortest wait):" : "No open role you qualify for is available in the OCs I have seen.", extra: options.length ? optionsHtml(options) : "", view: "ocs" });
+    }
+    return { mine, me, warnings, options };
+  }
+
+  function updateTabAlert() {
+    const { bar } = crimesTabParts();
+    const btn = bar && bar.querySelector(".tt2p-settings-tab-btn");
+    if (!btn) return;
+    const n = dashSituation(ocRecords()).warnings.filter((w) => w.sev === "bad" || w.sev === "warn").length;
+    if (n) btn.setAttribute("data-alert", String(n)); else btn.removeAttribute("data-alert");
+  }
+  // learn the missing item's name for the viewer's own blocked role (brief native tooltip, at most once a minute)
+  function probeViewerItem(cardInfos) {
+    cardInfos.forEach(({ cardEl, info }) => info.slots.forEach((s) => {
+      if (!s.isViewer || !s.itemMissing || !s.wrapperEl) return;
+      const key = (cardEl.getAttribute("data-oc-id") || "") + ":" + s.roleName;
+      if (cachedItem(key)) return;
+      probeMissingItem({ key, header: s.wrapperEl.querySelector('button[class*="slotHeader__"]') }, () => {});
+    }));
+  }
+
+  /* ---- layout helpers (Torn-native panel chrome) ---- */
+  const dPanel = (title, body, open, extra) =>
+    `<div class="tt2p-tp"><div class="title-black top-round tt2p-tp-title"><h5 class="box-title">${title}</h5>${extra || ""}${open ? `<button type="button" class="tt2p-btn" data-open="${open}">Expand &#8599;</button>` : ""}</div><div class="cont-gray bottom-round tt2p-tp-body">${body}</div></div>`;
+  const dTd = (v, title) => `<td${title ? ` title="${escapeHtml(title)}"` : ""}>${v}</td>`;
+  const dTable = (head, rows) => `<div class="tt2p-mgr-scroll"><table class="tt2p-mgr-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+
+  /* ---- pipeline Gantt: every OC as one line, members as segments (hours of planning), open roles hatched ---- */
+  function dashGantt(recs, full) {
+    const H = 168;
+    const X = (h) => Math.max(0, Math.min(100, (h / H) * 100));
+    const pos = (h0, h1) => `left:${X(h0).toFixed(2)}%;width:${Math.max(0.7, X(Math.min(h1, H)) - X(h0)).toFixed(2)}%`;
+    const bar = (cls, h0, h1, label, tip) => (h0 >= H ? "" : `<div class="tt2p-g-bar tt2p-g-${cls}" style="${pos(h0, h1)}" title="${escapeHtml(tip || "")}">${label ? `<span>${escapeHtml(label)}</span>` : ""}</div>`);
+    const row = (label, sub, inner) => `<div class="tt2p-g-row"><div class="tt2p-g-label"><b>${label}</b>${sub ? `<small>${sub}</small>` : ""}</div><div class="tt2p-g-track">${inner}</div></div>`;
+    const ticks = [0, 24, 48, 72, 96, 120, 144, 168].map((h) => `<span style="left:${X(h)}%">${h === 0 ? "Now" : "+" + h / 24 + "d"}</span>`).join("");
+    let html = `<div class="tt2p-g-row tt2p-g-axisrow"><div class="tt2p-g-label"></div><div class="tt2p-g-track tt2p-g-axis">${ticks}</div></div>`;
+
+    const sorted = recs.slice().sort((a, b) => (b.isMine ? 1 : 0) - (a.isMine ? 1 : 0) || (b.opens.length > 0 && a.opens.length === 0 ? 1 : a.opens.length > 0 && b.opens.length === 0 ? -1 : 0) || b.level - a.level || crimeImportanceIndex(a.name) - crimeImportanceIndex(b.name) || a.waitNow - b.waitNow);
+    const shown = sorted.slice(0, full ? 200 : 9);
+    if (!shown.length) return `<div class="tt2p-mgr-note">Nothing to draw yet: open the Recruiting / Planning tabs once.</div>`;
+    shown.forEach((r) => {
+      let inner = "";
+      let t = 0;
+      r.segs.forEach((sg) => {
+        const nm = sg.s.name || sg.s.role;
+        const tip = `${nm} (${sg.s.role}): ${sg.kind === "active" ? "planning now, " : sg.kind === "blocked" ? "BLOCKED - missing the required item, " : "queued, "}${fmtHrs(sg.hrs)} of planning${sg.s.cpr ? "; CPR " + sg.s.cpr + (sg.s.req !== undefined ? "/" + sg.s.req : "") : ""}`;
+        inner += bar(sg.kind + (sg.s.me ? " tt2p-g-me" : ""), t, t + sg.hrs, `${nm} ${Math.round(sg.hrs)}h`, tip);
+        t += sg.hrs;
+      });
+      const stallAt = t;
+      r.opens.forEach((s) => {
+        inner += bar("need", t, t + 24, "open: " + s.role, `Open role: ${s.role}${s.req !== undefined ? ", needs CPR " + s.req : ""}${s.cpr ? " (yours: " + s.cpr + ")" : ""}${s.qual === true ? " - you qualify" : s.qual === false ? " - below your CPR" : ""}`);
+        t += 24;
+      });
+      if (r.opens.length) inner += `<i class="tt2p-g-flag" style="left:${X(stallAt).toFixed(2)}%" title="${escapeHtml(r.name + " stalls here unless the open roles are filled")}"></i>`;
+      const done = r.slots.filter((s) => s.occ && s.st === "complete").length;
+      const sub = `L${r.level || "?"} &middot; ${r.filled}/${r.total}${done ? " &middot; " + done + " done" : ""}`;
+      html += row(`${escapeHtml(dAbbr(r.name))}${r.isMine ? ' <span class="tt2p-mgr-ok">&#9733; you</span>' : ""}`, sub, inner);
+    });
+    if (!full && sorted.length > shown.length) html += `<div class="tt2p-g-empty">+${sorted.length - shown.length} more in the full view</div>`;
+    const legend = `<div class="tt2p-g-legend"><span><i class="tt2p-g-active"></i>planning now</span><span><i class="tt2p-g-queued"></i>queued (24h each)</span><span><i class="tt2p-g-blocked"></i>blocked (missing item)</span><span><i class="tt2p-g-need"></i>open role</span><span><i class="tt2p-g-flagkey"></i>stalls here if unfilled</span></div>`;
+    return `<div class="tt2p-g-wrap"><div class="tt2p-g">${html}</div></div>${legend}`;
+  }
+
+  /* ---- snapshot, finishing soon ---- */
+  function dashSnapshot(recs) {
+    const kv = (l, v, sub) => `<div class="tt2p-kv"><span>${l}</span><b>${v}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+    const rec = recs.filter((r) => !r.full);
+    const plan = recs.filter((r) => r.full);
+    const openSlots = rec.reduce((a, r) => a + r.opens.length, 0);
+    const youQual = rec.reduce((a, r) => a + r.opens.filter((s) => s.qual === true).length, 0);
+    const soon = recs.filter((r) => r.readyNow !== null && r.readyNow <= 24);
+    const soonPeople = soon.reduce((a, r) => a + r.filled, 0);
+    const over = rec.filter((r) => r.filled && r.waitNow > (isTop(r) ? QUEUE_CAP_TOP_HOURS : QUEUE_CAP_HOURS)).length;
+    const missing = recs.filter((r) => r.slots.some((s) => s.miss)).length;
+    const ages = ["recruiting", "planning"].map((t) => (ocCache[t] ? `${t === "recruiting" ? "Recruiting" : "Planning"} ${Math.max(0, Math.round((Date.now() - ocCache[t].at) / 60000))}m ago` : null)).filter(Boolean);
+    return kv("OCs recruiting / planning", rec.length + " / " + plan.length) + kv("Open slots", openSlots, youQual ? youQual + " you qualify for" : "") +
+      kv("OCs finishing in 24h", soon.length, soonPeople ? soonPeople + " members freed" : "") + kv("Over-queued OCs", over) + kv("OCs with a missing item", missing) +
+      `<div class="tt2p-mgr-note" style="margin-top:6px">${ages.length ? "Seen: " + ages.join(" &middot; ") + ". Open a tab to refresh it." : "Nothing seen yet."}</div>`;
+  }
+
+  function dashFinishing(recs, limit, hoursMax) {
+    const soon = recs.filter((r) => r.readyNow !== null && r.readyNow <= hoursMax).sort((a, b) => a.readyNow - b.readyNow);
+    if (!soon.length) return `<div class="tt2p-mgr-note">No OC finishes in the next ${hoursMax}h (from what I have seen).</div>`;
+    const rows = soon.slice(0, limit).map((r) => `<tr>${dTd(fmtHrs(r.readyNow))}${dTd(escapeHtml(r.name) + (r.isMine ? ' <span class="tt2p-mgr-ok">&#9733; you</span>' : ""))}${dTd("L" + (r.level || "?"))}${dTd(escapeHtml(r.slots.filter((s) => s.occ).map((s) => s.name || "?").join(", ")))}</tr>`);
+    return dTable(["Finishes", "OC", "Lvl", "Members who become free"], rows) + (soon.length > limit ? `<div class="tt2p-mgr-note">+${soon.length - limit} more in the full view.</div>` : "");
+  }
+
+  /* ---- your CPR for every role, grouped by level ---- */
+  function cprGroups() {
+    const names = Object.keys(CPR_REQUIREMENTS).filter((n) => showHiddenOcs || !HIDDEN_CRIMES_BY_DEFAULT.includes(n));
+    const groups = {};
+    names.forEach((n) => { const lv = crimeDifficultyCache[n] || LEVEL_DEFAULTS[n] || 0; (groups[lv] = groups[lv] || []).push(n); });
+    return Object.keys(groups).map(Number).sort((a, b) => b - a).map((lv) => ({ lv, crimes: groups[lv].sort((a, b) => crimeImportanceIndex(a) - crimeImportanceIndex(b) || a.localeCompare(b)) }));
+  }
+  function dashCprCompact() {
+    const store = loadStore();
+    const groups = cprGroups().filter((g) => g.lv >= 7);
+    if (!groups.length) return `<div class="tt2p-mgr-note">No crimes configured.</div>`;
+    return groups.map((g) => `<div class="tt2p-cpr-lv">Level ${g.lv}</div>` + g.crimes.map((n) => {
+      const reqs = CPR_REQUIREMENTS[n];
+      const chips = sortRoleNamesByWeight(n, Object.keys(reqs)).map((role) => {
+        const e = store[n] && store[n][role];
+        const v = e ? e.value : null;
+        const cls = v === null ? "tt2p-cpr-none" : v >= reqs[role] - LENIENCY ? "tt2p-cpr-ok" : "tt2p-cpr-low";
+        return `<span class="tt2p-cpr-chip ${cls}" title="${escapeHtml(role + ": your CPR " + (v === null ? "not seen yet" : v) + ", requirement " + reqs[role])}">${escapeHtml(role)} <b>${v === null ? "&ndash;" : v}</b><i>/${reqs[role]}</i></span>`;
+      }).join("");
+      return `<div class="tt2p-cpr-row"><span class="tt2p-cpr-crime">${escapeHtml(n)}</span><span class="tt2p-cpr-chips">${chips}</span></div>`;
+    }).join("")).join("") + `<div class="tt2p-mgr-note">Green = meets the faction requirement, red = below it, grey = not seen yet (your CPR appears for a role when that OC is on screen). Lower levels are in the full view.</div>`;
+  }
+  function dashCprFull() {
+    const store = loadStore();
+    const rows = [];
+    cprGroups().forEach((g) => {
+      rows.push(`<tr class="tt2p-ov-grp"><td colspan="6">Level ${g.lv || "?"}</td></tr>`);
+      g.crimes.forEach((n) => {
+        const reqs = CPR_REQUIREMENTS[n];
+        sortRoleNamesByWeight(n, Object.keys(reqs)).forEach((role, i) => {
+          const e = store[n] && store[n][role];
+          const diff = e ? e.value - reqs[role] : null;
+          const dt = e ? new Date(e.updatedAt) : null;
+          rows.push(`<tr>${dTd(i === 0 ? "<b>" + escapeHtml(n) + "</b>" : "")}${dTd(escapeHtml(role))}${dTd(e ? `<b>${e.value}</b>` : '<span class="tt2p-mgr-dim">not seen</span>')}${dTd(reqs[role])}${dTd(diff === null ? "" : diff >= 0 ? `<span class="tt2p-mgr-ok">&#10003; +${diff}</span>` : `<span class="tt2p-mgr-bad">needs +${-diff}</span>`)}${dTd(dt && !isNaN(dt) ? dt.toLocaleDateString() : "")}</tr>`);
+        });
+      });
+    });
+    return dTable(["Crime", "Role", "Your CPR", "Required", "Gap", "Updated"], rows);
+  }
+
+  /* ---- OC list (grouped like the in-game board) ---- */
+  let ocSort = "time";
+  let ocFilter = "";
+  const ocOpen = new Set();
+  function dashOcRow(r) {
+    const timeCls = (h) => (h === null ? "" : h < 12 ? "tt2p-oc-t-bad" : h < 24 ? "tt2p-oc-t-warn" : "tt2p-oc-t-ok");
+    const issues = [];
+    const zero = r.slots.filter((s) => s.occ && s.st !== "complete" && s.st !== "in_progress").length;
+    const partial = r.slots.some((s) => s.occ && s.st === "in_progress");
+    const queued = Math.max(0, zero - (partial ? 0 : 1));
+    const rows = r.slots.map((s) => {
+      let member; let plan = ""; let cpr = ""; const notes = [];
+      if (s.occ) {
+        member = `${s.uid ? `<a href="https://www.torn.com/profiles.php?XID=${s.uid}" target="_blank" rel="noopener">${escapeHtml(s.name || "?")}</a>` : escapeHtml(s.name || "?")}${s.me ? ' <span class="tt2p-mgr-ok">&#9733; you</span>' : ""}`;
+        plan = s.st === "complete" ? `<span class="tt2p-mgr-ok">Done</span>` : s.st === "in_progress" ? `<span class="tt2p-oc-bar"><i style="width:${Math.round(s.pct || 0)}%"></i></span> ${Math.round(s.pct || 0)}%` : `<span class="tt2p-mgr-dim">${s.miss ? "Blocked" : "Queued"}</span>`;
+        const low = s.req !== undefined && s.cpr > 0 && s.cpr < s.req - LENIENCY;
+        cpr = `<span class="${low ? "tt2p-mgr-bad" : ""}">${s.cpr || "-"}</span>${s.req !== undefined ? ` <span class="tt2p-mgr-dim">/ ${s.req}</span>` : ""}`;
+        if (low) issues.push(`${s.name || "?"} (${s.role}): CPR ${s.cpr} is below the ${s.req} requirement`);
+        if (s.miss) { const it = cachedItem(r.id + ":" + s.role); notes.push(`<span class="tt2p-mgr-bad">Missing ${escapeHtml(it && it.text ? it.text : "required item")}</span>`); issues.push(`${s.name || "?"} is missing an item`); }
+      } else {
+        member = `<span class="tt2p-mgr-dim">Open slot</span>`;
+        cpr = s.req !== undefined ? `<span class="${s.qual === false ? "tt2p-mgr-bad" : "tt2p-mgr-ok"}">you ${s.cpr || "-"}</span> <span class="tt2p-mgr-dim">/ ${s.req}</span>` : "";
+        notes.push(`<span class="tt2p-mgr-dim">${s.qual === true ? "you qualify" : s.qual === false ? "below your CPR" : ""}</span>`);
+      }
+      return `<tr>${dTd(escapeHtml(s.role))}${dTd(member)}${dTd(plan)}${dTd(cpr)}${dTd(notes.join(" "))}</tr>`;
+    });
+    if (r.stalled) issues.unshift("this OC is stalled");
+    const kind = !r.filled ? "uninit" : r.opens.length ? "rec" : "full";
+    const t = kind === "uninit" ? null : kind === "rec" ? r.waitNow : r.readyNow;
+    const label = kind === "uninit" ? "Empty" : kind === "rec" ? "Stalls in" : "Ready in";
+    const qb = queued ? `<span class="tt2p-oc-q tt2p-oc-q${Math.min(3, queued)}" title="${queued} member(s) waiting in the planning queue">${queued} queued</span>` : "";
+    const warn = issues.length ? `<span class="tt2p-oc-warn" title="${escapeHtml(issues.join("\n"))}">&#9888; ${issues.length}</span>` : "";
+    const body = (issues.length ? `<ul class="tt2p-oc-issues">${issues.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>` : "") +
+      `<div class="tt2p-mgr-scroll"><table class="tt2p-mgr-table tt2p-oc-tbl"><thead><tr><th>Role</th><th>Member</th><th>Planning</th><th>CPR / req</th><th>Notes</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+    return { kind, t, html: `<details class="tt2p-oc${r.isMine ? " tt2p-oc-mine" : ""}" data-id="${escapeHtml(r.id)}" ${ocOpen.has(String(r.id)) ? "open" : ""}><summary><span class="tt2p-oc-badge">${r.filled}/${r.total}</span>${warn}${qb}<span class="tt2p-oc-name">Lv${r.level || "?"} ${escapeHtml(r.name)}${r.isMine ? ' <span class="tt2p-mgr-ok">&#9733; you</span>' : ""}</span><span class="tt2p-oc-time ${timeCls(t)}">${t === null ? label : label + ": " + fmtHrs(t)}</span></summary><div class="tt2p-oc-body">${body}</div></details>` };
+  }
+  function dashOcListHtml(recs) {
+    const q = ocFilter.trim().toLowerCase();
+    const items = recs.filter((r) => !q || r.name.toLowerCase().includes(q) || r.slots.some((s) => s.occ && (s.name || "").toLowerCase().includes(q))).map((r) => Object.assign({ r }, dashOcRow(r)));
+    const sorter = ocSort === "level" ? (a, b) => b.r.level - a.r.level || (a.t === null) - (b.t === null) || a.t - b.t : (a, b) => (a.t === null) - (b.t === null) || a.t - b.t;
+    return [["uninit", "Uninitiated crimes"], ["rec", "Recruiting crimes"], ["full", "Full / planning crimes"]].map(([k, title]) => {
+      const list = items.filter((i) => i.kind === k).sort(sorter);
+      return `<div class="tt2p-oc-sec">${title} <span>(${list.length})</span></div>` + (list.length ? list.map((i) => i.html).join("") : `<div class="tt2p-mgr-note">None seen.</div>`);
+    }).join("");
+  }
+  function dashOcPanelHtml(recs) {
+    return `<div class="tt2p-oc-ctl"><span>Sort</span><button type="button" class="tt2p-btn ${ocSort === "time" ? "on" : ""}" data-ocsort="time">Time</button><button type="button" class="tt2p-btn ${ocSort === "level" ? "on" : ""}" data-ocsort="level">Level</button><input id="tt2p-board-search" type="text" placeholder="Search member or crime..." value="${escapeHtml(ocFilter)}" autocomplete="off" /><button type="button" class="tt2p-btn" data-ocall="1">Expand all</button><button type="button" class="tt2p-btn" data-ocall="0">Collapse all</button></div><div id="tt2p-board-list">${dashOcListHtml(recs)}</div>`;
+  }
+
+  /* ---- compact tab + full-screen overlay ---- */
+  const DASH_VIEWS = [["overview", "Timeline"], ["ocs", "OC list"], ["cpr", "My CPRs"], ["settings", "Settings"]];
+  let dashOvView = "overview";
+  let settingsHome = null;
+
+  function situationHtml(sit) {
+    return sit.warnings.slice(0, 4).map((f) => `<div class="tt2p-find tt2p-find-${f.sev}"><i></i><div class="tt2p-find-txt"><b>${f.title}</b><div class="tt2p-find-cause">${f.cause}</div>${f.action ? `<div class="tt2p-find-act">${f.action}</div>` : ""}${f.extra || ""}</div>${f.view ? `<button type="button" class="tt2p-btn" data-open="${f.view}">Details</button>` : ""}</div>`).join("");
+  }
+  function dashLayer1() {
+    const recs = ocRecords();
+    const sit = dashSituation(recs);
+    const btns = `<button type="button" class="tt2p-btn" data-open="overview">Full view &#8599;</button><button type="button" class="tt2p-btn" data-open="ocs">OC list</button><button type="button" class="tt2p-btn" data-open="settings">Settings</button>`;
+    return dPanel("Your situation", situationHtml(sit), null, btns) +
+      `<div class="tt2p-mgr-grid">${dPanel("Snapshot", dashSnapshot(recs), "ocs")}${dPanel("Finishing in 24h", dashFinishing(recs, 5, 24), "overview")}</div>` +
+      dPanel("Pipeline: every OC, who is planning and what is still open", dashGantt(recs, false), "overview") +
+      dPanel("Your CPR by level", dashCprCompact(), "cpr");
+  }
+  function dashOverlayHtml(view) {
+    const recs = ocRecords();
+    switch (view) {
+      case "ocs": return dPanel("Running OCs", dashOcPanelHtml(recs));
+      case "cpr": return dPanel("Your CPR for every role", dashCprFull());
+      case "settings": return "";
+      default: return dPanel("Your situation", situationHtml(dashSituation(recs))) + dPanel("Pipeline: every OC", dashGantt(recs, true)) + dPanel("Finishing in the next 48h", dashFinishing(recs, 60, 48));
+    }
+  }
+  function restoreSettingsPanel() {
+    if (settingsPanelEl && settingsHome && settingsPanelEl.parentElement !== settingsHome) settingsHome.appendChild(settingsPanelEl);
+  }
+  function renderOverlay() {
+    const ov = document.getElementById("tt2p-mgr-overlay");
+    if (!ov) return;
+    const body = ov.querySelector(".tt2p-ov-body");
+    const top = body.scrollTop;
+    ov.querySelector(".tt2p-ov-nav").innerHTML = DASH_VIEWS.map(([v, l]) => `<button type="button" class="${v === dashOvView ? "on" : ""}" data-view="${v}">${l}</button>`).join("");
+    if (dashOvView === "settings" && settingsPanelEl) {
+      body.innerHTML = "";
+      body.appendChild(settingsPanelEl);
+      renderSettingsPanel();
+      renderGrowthPanel();
+    } else {
+      restoreSettingsPanel();
+      body.innerHTML = dashOverlayHtml(dashOvView);
+    }
+    body.scrollTop = top;
+  }
+  function openOverlay(view) {
+    const ov = ensureOverlay();
+    dashOvView = DASH_VIEWS.some(([v]) => v === view) ? view : "overview";
+    ov.classList.add("tt2p-open");
+    document.documentElement.classList.add("tt2p-ov-lock");
+    renderOverlay();
+    ov.querySelector(".tt2p-ov-body").scrollTop = 0;
+  }
+  function closeOverlay() {
+    const ov = document.getElementById("tt2p-mgr-overlay");
+    restoreSettingsPanel();
+    if (ov) ov.classList.remove("tt2p-open");
+    document.documentElement.classList.remove("tt2p-ov-lock");
+  }
+  function renderDashboard() {
+    const el = document.getElementById("tt2p-mgr-dashboard");
+    if (el) {
+      try { el.innerHTML = dashLayer1(); }
+      catch (e) { console.error("[OC Prioritizer] dashboard error", e); el.innerHTML = `<div class="tt2p-mgr-err">Dashboard error: ${escapeHtml(e.message)}</div>`; }
+    }
+    const ov = document.getElementById("tt2p-mgr-overlay");
+    if (ov && ov.classList.contains("tt2p-open")) renderOverlay();
+  }
+  function dashHandleClick(e) {
+    const t = e.target.closest && e.target.closest("[data-open],[data-view],[data-close],[data-ocsort],[data-ocall]");
+    if (!t) return;
+    if (t.dataset.open) return openOverlay(t.dataset.open);
+    if (t.dataset.view) { dashOvView = t.dataset.view; return renderOverlay(); }
+    if (t.dataset.close !== undefined) return closeOverlay();
+    if (t.dataset.ocsort) { ocSort = t.dataset.ocsort; return renderOverlay(); }
+    if (t.dataset.ocall !== undefined) {
+      ocOpen.clear();
+      if (t.dataset.ocall === "1") ocRecords().forEach((r) => ocOpen.add(String(r.id)));
+      const lst = document.getElementById("tt2p-board-list");
+      if (lst) lst.innerHTML = dashOcListHtml(ocRecords());
+    }
+  }
+  function ensureOverlay() {
+    let ov = document.getElementById("tt2p-mgr-overlay");
+    if (ov) return ov;
+    ov = document.createElement("div");
+    ov.id = "tt2p-mgr-overlay";
+    ov.innerHTML = `<div class="tt2p-ov-head title-black"><b class="tt2p-ov-title">Mutation OC Prioritizer</b><nav class="tt2p-ov-nav"></nav><button type="button" class="tt2p-btn" data-close="1">Close &#10005;</button></div><div class="tt2p-ov-body"></div>`;
+    ov.addEventListener("click", dashHandleClick);
+    ov.addEventListener("input", (e) => {
+      if (e.target.id !== "tt2p-board-search") return;
+      ocFilter = e.target.value;
+      const lst = document.getElementById("tt2p-board-list");
+      if (lst) lst.innerHTML = dashOcListHtml(ocRecords());
+    });
+    ov.addEventListener("toggle", (e) => {
+      const d = e.target;
+      if (d && d.classList && d.classList.contains("tt2p-oc")) { if (d.open) ocOpen.add(d.dataset.id); else ocOpen.delete(d.dataset.id); }
+    }, true);
+    document.body.appendChild(ov);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ov.classList.contains("tt2p-open")) closeOverlay(); });
+    return ov;
+  }
+  function ensureDashboard() {
+    let el = document.getElementById("tt2p-mgr-dashboard");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "tt2p-mgr-dashboard";
+    el.addEventListener("click", dashHandleClick);
+    return el;
+  }
+  function dashOnTabOpen() {
+    renderDashboard();
+  }
+
+  /* ============================================================================
+   * "Prioritizer Settings" as a 4th Crimes tab
+   * Recruiting | Planning | Completed | Prioritizer Settings
+   * Clones a native tab button (so it styles identically), appends it to Torn's tab
+   * bar and puts our settings panel right under the bar. While it is open we hide
+   * Torn's own tab content with CSS (no Torn DOM is removed, so React stays happy).
+   * ============================================================================ */
+  let nativeActiveCls = null; // Torn's hashed "active___xxxxx" class, discovered at runtime
+
+  function crimesTabParts() {
+    const root = document.getElementById("faction-crimes-root");
+    const bar = root ? root.querySelector('[class*="buttonsContainer__"]') : null;
+    return { root, bar };
+  }
+  const isActiveCls = (c) => /^active__/.test(c);
+
+  function ensureSettingsTab() {
+    const { root, bar } = crimesTabParts();
+    if (!root || !bar || !settingsPanelEl) return;
+    const natives = Array.from(bar.querySelectorAll("button")).filter((b) => !b.classList.contains("tt2p-settings-tab-btn"));
+    if (!natives.length) return;
+
+    const activeNative = natives.find((b) => Array.from(b.classList).some(isActiveCls));
+    if (activeNative) nativeActiveCls = Array.from(activeNative.classList).find(isActiveCls);
+
+    let btn = bar.querySelector(".tt2p-settings-tab-btn");
+    if (!btn) {
+      btn = natives[0].cloneNode(true);
+      btn.removeAttribute("i-data");
+      Array.from(btn.classList).filter(isActiveCls).forEach((c) => btn.classList.remove(c));
+      btn.classList.add("tt2p-settings-tab-btn");
+      btn.title = "Mutation Prioritizer settings (Manager build)";
+      const icon = btn.querySelector('[class*="iconWrapper__"]');
+      if (icon) icon.innerHTML = "";
+      const label = btn.querySelector('[class*="tabName__"]');
+      const html = '<span class="tt2p-lbl-full">Prioritizer Settings</span><span class="tt2p-lbl-short">Prioritizer</span>';
+      if (label) label.innerHTML = html; else btn.innerHTML = html;
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openSettingsTab();
+      });
+      bar.appendChild(btn);
+    }
+
+    let tabPanel = document.getElementById("tt2p-settings-tab-panel");
+    if (!tabPanel) {
+      tabPanel = document.createElement("div");
+      tabPanel.id = "tt2p-settings-tab-panel";
+      tabPanel.appendChild(ensureDashboard());
+      const cprDetails = document.createElement("details");
+      cprDetails.className = "tt2p-mgr-sec tt2p-mgr-cpr";
+      cprDetails.innerHTML = "<summary>Prioritizer settings &amp; your CPR data</summary>";
+      cprDetails.appendChild(settingsPanelEl);
+      settingsHome = cprDetails;
+      tabPanel.appendChild(cprDetails);
+    }
+    if (tabPanel.previousElementSibling !== bar) bar.insertAdjacentElement("afterend", tabPanel);
+
+    // leaving via one of Torn's own tabs: hand the view back to Torn
+    if (!bar.__tt2pTabBound) {
+      bar.__tt2pTabBound = true;
+      bar.addEventListener("click", (e) => {
+        const b = e.target.closest && e.target.closest("button");
+        if (!b || b.classList.contains("tt2p-settings-tab-btn") || !settingsTabOpen) return;
+        closeSettingsTab(b);
+      }, true);
+    }
+
+    // keep highlight correct if Torn re-rendered the bar while we are open
+    if (settingsTabOpen && nativeActiveCls) {
+      natives.forEach((b) => b.classList.remove(nativeActiveCls));
+      btn.classList.add(nativeActiveCls);
+      root.classList.add("tt2p-settings-open");
+    }
+  }
+
+  function openSettingsTab() {
+    ensureSettingsTab();
+    const { root, bar } = crimesTabParts();
+    if (!root || !bar) return;
+    // remember which of Torn's tabs was showing, and take one last look at its cards (no extra requests)
+    lastNativeTab = currentNativeTab() || lastNativeTab;
+    refreshOcCacheFromDom(lastNativeTab);
+    settingsTabOpen = true;
+    const btn = bar.querySelector(".tt2p-settings-tab-btn");
+    if (nativeActiveCls) {
+      bar.querySelectorAll("button").forEach((b) => b.classList.remove(nativeActiveCls));
+      if (btn) btn.classList.add(nativeActiveCls);
+    }
+    root.classList.add("tt2p-settings-open");
+    ensureCustomTooltip().classList.remove("tt2p-tooltip-visible");
+    renderSettingsPanel();
+    renderGrowthPanel();
+    dashOnTabOpen();
+  }
+
+  function closeSettingsTab(clickedNative) {
+    if (!settingsTabOpen) return;
+    settingsTabOpen = false;
+    const { root, bar } = crimesTabParts();
+    if (root) root.classList.remove("tt2p-settings-open");
+    const btn = bar && bar.querySelector(".tt2p-settings-tab-btn");
+    if (btn && nativeActiveCls) btn.classList.remove(nativeActiveCls);
+    // if the user re-clicked the tab Torn already considers active, React won't re-add its class
+    if (clickedNative && nativeActiveCls) {
+      setTimeout(() => clickedNative.classList.add(nativeActiveCls), 40);
+    }
+    if (latestDebouncedPass) latestDebouncedPass();
   }
 
   function renderSettingsPanel() {
@@ -1525,6 +2108,281 @@
       }
       .tt2p-pill-on .tt2p-pill-knob { left: 22px; }
       #tt2p-toggle-state-label { opacity: 0.8; font-size: 11px; }
+      /* ---- MANAGER / UAT: density-line planning bar ---- */
+      .tt2p-dens-host { display: block; }
+      .tt2p-dens { position: relative; padding-top: 20px; padding-bottom: 1px; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+      .tt2p-dens-pinrow { position: absolute; left: 2px; right: 2px; top: 0; height: 20px; pointer-events: none; }
+      .tt2p-dens-pin {
+        position: absolute; top: 0; left: var(--tt2p-pin-left, 0%);
+        width: 18px; height: 18px; margin-left: -9px; box-sizing: border-box;
+        border-radius: 50%; background: #161616;
+        border: 2px solid var(--tt2p-pin-color, #c82121); color: var(--tt2p-pin-color, #c82121);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 0 6px var(--tt2p-pin-glow, rgba(200,33,33,.6));
+        pointer-events: auto; cursor: help; z-index: 3;
+      }
+      .tt2p-dens-pin::after {
+        content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -4px;
+        border-style: solid; border-width: 5px 4px 0 4px;
+        border-color: var(--tt2p-pin-color, #c82121) transparent transparent transparent;
+      }
+      .tt2p-dens-outer {
+        position: relative; padding: 2px; box-sizing: border-box; border-radius: 6px;
+        background: #0d0d0d; border: 1px solid #000;
+        box-shadow: 0 1px 0 #484848, inset 0 1px 2px rgba(0,0,0,.8);
+      }
+      .tt2p-dens-inner { border-radius: 4px; overflow: hidden; background: #1a1a1a; }
+      .tt2p-dens-track { position: relative; height: 8px; }
+      .tt2p-dens-seg { position: absolute; top: 0; bottom: 0; cursor: help; }
+      .tt2p-dens-seg-fill { position: absolute; left: 0; top: 0; bottom: 0; transition: width .35s ease; }
+      .tt2p-dens-complete { background: linear-gradient(180deg, #a82a2a 0%, #7a1a1a 100%); }
+      .tt2p-dens-active { background: #2c2c2c; }
+      .tt2p-dens-active .tt2p-dens-seg-fill {
+        background-image:
+          linear-gradient(45deg, rgba(255,255,255,.22) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.22) 75%, transparent 75%, transparent),
+          linear-gradient(180deg, #e04a4a 0%, #c82121 100%);
+        background-size: 12px 12px, auto;
+        animation: tt2p-dens-stripes .9s linear infinite;
+      }
+      @keyframes tt2p-dens-stripes {
+        from { background-position: 0 0, 0 0; }
+        to   { background-position: 12px 0, 0 0; }
+      }
+      @media (prefers-reduced-motion: reduce) { .tt2p-dens-active .tt2p-dens-seg-fill { animation: none; } }
+      .tt2p-dens-queued { background: #2e2e2e; }
+      .tt2p-dens-blocked { background: rgba(160, 90, 220, .45); }
+      .tt2p-dens-vacant { background: repeating-linear-gradient(135deg, #191919 0 4px, #121212 4px 8px); }
+      .tt2p-dens-stripes {
+        position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(90deg, rgba(255,255,255,.035) 0 1px, transparent 1px 4px);
+      }
+      .tt2p-dens-delims { position: absolute; left: 2px; right: 2px; top: -3px; bottom: -3px; pointer-events: none; }
+      .tt2p-dens-delim { position: absolute; top: 0; bottom: 0; width: 1px; background: #6b6b6b; box-shadow: -1px 0 0 #000, 1px 0 0 #000; }
+      .tt2p-dens-labels { position: relative; height: 12px; margin: 3px 2px 0; }
+      .tt2p-dens-label {
+        position: absolute; top: 0; box-sizing: border-box; padding: 0 3px; text-align: center;
+        font-family: 'Inter', Arial, sans-serif; font-size: 9px; line-height: 12px; color: #8a8a8a;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help;
+      }
+      .tt2p-dens-label-active { color: #e8e8e8; font-weight: 600; }
+      .tt2p-dens-label-complete { color: #b98a8a; }
+
+      /* ---- MANAGER / UAT: Prioritizer Settings as a 4th Crimes tab ---- */
+      #tt2p-settings-tab-panel { display: none; margin: 10px 0; }
+      #faction-crimes-root.tt2p-settings-open #tt2p-settings-tab-panel { display: block; }
+      #faction-crimes-root.tt2p-settings-open > div > *:not(svg):not([class*="buttonsContainer__"]):not(#tt2p-settings-tab-panel) { display: none !important; }
+      #tt2p-settings-tab-panel #tt2p-settings-panel {
+        position: static; display: block; width: auto; max-height: none;
+        overflow: visible; z-index: auto; box-sizing: border-box;
+      }
+      .tt2p-settings-tab-btn { min-width: 0; }
+      .tt2p-settings-tab-btn .tt2p-lbl-short { display: none; }
+      .tt2p-settings-tab-btn .tt2p-lbl-full, .tt2p-settings-tab-btn .tt2p-lbl-short { white-space: nowrap; }
+      @media (max-width: 560px) {
+        .tt2p-settings-tab-btn .tt2p-lbl-full { display: none; }
+        .tt2p-settings-tab-btn .tt2p-lbl-short { display: inline; }
+      }
+      #tt2p-tooltip { box-sizing: border-box; }
+      /* ---- MANAGER / UAT: dashboard ---- */
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) { font-family: 'Inter', Arial, sans-serif; font-size: 12px; color: var(--tt2p-text); margin-bottom: 10px; }
+      .tt2p-mgr-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: var(--tt2p-charcoal); border: 1px solid var(--tt2p-red-border); border-radius: 6px 6px 0 0; }
+      .tt2p-mgr-title { font-weight: 700; font-size: 13px; color: var(--tt2p-red-pink); }
+      .tt2p-mgr-status { flex: 1; color: var(--tt2p-mute); font-size: 11px; }
+      .tt2p-mgr-dim { color: var(--tt2p-mute); }
+      .tt2p-mgr-err { margin: 6px 0; padding: 6px 10px; border: 1px solid var(--tt2p-red-accent); background: var(--tt2p-red-darkbg); color: var(--tt2p-red-light); border-radius: 4px; }
+      .tt2p-mgr-sec { background: #1a1a1a; border: 1px solid var(--tt2p-border); border-top: none; }
+      .tt2p-mgr-sec > summary { cursor: pointer; padding: 7px 12px; font-weight: 700; font-size: 12px; background: #202020; list-style: none; user-select: none; }
+      .tt2p-mgr-sec > summary::-webkit-details-marker { display: none; }
+      .tt2p-mgr-sec > summary::before { content: "\\25B8"; display: inline-block; width: 14px; color: var(--tt2p-red-light); }
+      .tt2p-mgr-sec[open] > summary::before { content: "\\25BE"; }
+      .tt2p-mgr-body { padding: 8px 10px 10px; }
+      .tt2p-mgr-cpr { margin-top: 10px; border: 1px solid var(--tt2p-border); border-radius: 6px; overflow: hidden; }
+      .tt2p-mgr-cpr #tt2p-settings-panel { border: none; border-radius: 0; }
+      .tt2p-mgr-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 6px; }
+      .tt2p-mgr-kpi { background: #151515; border: 1px solid var(--tt2p-border); border-top: 2px solid var(--tt2p-red-border); border-radius: 4px; padding: 5px 8px; display: flex; flex-direction: column; }
+      .tt2p-mgr-kpi span { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; color: var(--tt2p-mute); }
+      .tt2p-mgr-kpi b { font-size: 16px; font-variant-numeric: tabular-nums; }
+      .tt2p-mgr-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .tt2p-mgr-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      .tt2p-mgr-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--tt2p-red-pink); padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.15); white-space: nowrap; }
+      .tt2p-mgr-table td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; }
+      .tt2p-mgr-table tbody tr:hover { background: rgba(255,255,255,.03); }
+      .tt2p-mgr-chip { display: inline-block; background: rgba(200,33,33,.18); border: 1px solid var(--tt2p-red-border); border-radius: 3px; padding: 0 5px; margin: 1px 2px 1px 0; font-weight: 700; white-space: nowrap; }
+      .tt2p-mgr-lines { margin: 0 0 8px; padding-left: 16px; line-height: 1.5; }
+      .tt2p-mgr-note { margin-top: 6px; color: var(--tt2p-mute); font-size: 11px; line-height: 1.45; }
+      .tt2p-mgr-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+      .tt2p-mgr-row input[type="password"] { flex: 1 1 200px; min-width: 0; }
+      .tt2p-mgr-row input, .tt2p-mgr-row button, .tt2p-mgr-head button { background: var(--tt2p-deep); border: 1px solid rgba(255,255,255,.2); color: var(--tt2p-text); border-radius: 4px; padding: 4px 8px; font-size: 11px; }
+      .tt2p-mgr-row input[type="number"] { width: 52px; }
+      .tt2p-mgr-row button, .tt2p-mgr-head button { cursor: pointer; font-weight: 700; }
+      .tt2p-mgr-row button:hover, .tt2p-mgr-head button:hover { background: #2a2a2a; }
+      .tt2p-mgr-row button:disabled, .tt2p-mgr-head button:disabled { opacity: .5; cursor: default; }
+      .tt2p-mgr-row label { display: flex; align-items: center; gap: 6px; color: var(--tt2p-mute); }
+      /* Torn's own table/list CSS forces dark text: pin our light palette */
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay), :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-body { color: #e8e8e8; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-lines li,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-row label,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-kpi b { color: #e8e8e8 !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td b,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-lines li b,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td span { color: #ffffff !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-dim,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td .tt2p-mgr-dim { color: #9a9a9a !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-chip,
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td .tt2p-mgr-chip { color: #ffd6d6 !important; background: rgba(200,33,33,.28); border-color: #b02a2a; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-note { color: #b0b0b0 !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table th { color: #ff9a9a !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-kpi span { color: #a8a8a8 !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-sec > summary { color: #ffffff !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-title { color: #ff9a9a !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-status { color: #b0b0b0 !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td .tt2p-mgr-ok { color: #5ad06e !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td .tt2p-mgr-warn { color: #f0b43c !important; }
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) .tt2p-mgr-table td .tt2p-mgr-bad { color: #ff8787 !important; font-weight: 700; }
+      .tt2p-spin { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border: 2px solid #555; border-top-color: var(--tt2p-red-light); border-radius: 50%; animation: tt2p-spin .8s linear infinite; vertical-align: -1px; }
+      @keyframes tt2p-spin { to { transform: rotate(360deg); } }
+      /* ---- MANAGER / UAT: layer 1 panels (Torn chrome), findings, Gantt, overlay ---- */
+      :is(#tt2p-mgr-dashboard, #tt2p-mgr-overlay) { font-family: 'Inter', Arial, sans-serif; font-size: 12px; }
+      .tt2p-tp { margin: 0 0 10px; }
+      .tt2p-tp-title { display: flex !important; align-items: center; gap: 8px; height: auto !important; min-height: 30px; padding: 0 10px !important; box-sizing: border-box; }
+      .tt2p-tp-title h5.box-title { margin: 0 !important; flex: 1; font: 700 12px/30px 'Inter', Arial, sans-serif !important; color: var(--title-color, #fff) !important; text-shadow: var(--title-text-shadow, 0 0 2px #000); text-transform: none; }
+      .tt2p-tp-body { padding: 10px 12px !important; box-sizing: border-box; color: var(--default-color, #ddd); }
+      .tt2p-btn { background: var(--btn-background, linear-gradient(180deg,#111 0%,#555 25%,#333 60%,#333 78%,#111 100%)); border: var(--btn-border, 1px solid #111); color: var(--btn-color, #eee) !important; text-shadow: var(--btn-text-shadow, 0 0 5px #000); border-radius: 5px; padding: 3px 9px; font: 700 10px/1.4 'Inter', Arial, sans-serif; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+      .tt2p-btn:hover { background: var(--btn-hover-background, linear-gradient(180deg,#333 0%,#777 25%,#333 59%,#666 78%,#333 100%)); color: var(--btn-hover-color, #fff) !important; }
+      .tt2p-btn:disabled { opacity: .5; cursor: default; }
+      .tt2p-mgr-grid { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 10px; }
+      .tt2p-mgr-grid > .tt2p-tp { min-width: 0; }
+      @media (max-width: 700px) { .tt2p-mgr-grid { grid-template-columns: 1fr; } }
+      .tt2p-kv { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--divider-dark-color, #222); box-shadow: 0 1px 0 var(--divider-light-color, #474747); }
+      .tt2p-kv:last-child { border-bottom: none; box-shadow: none; }
+      .tt2p-kv span { flex: 1; color: var(--default-content-title-color, #aaa) !important; }
+      .tt2p-kv b { font-size: 14px; font-variant-numeric: tabular-nums; color: var(--default-color, #eee) !important; }
+      .tt2p-kv small { flex-basis: 100%; color: var(--default-content-title-color, #888) !important; font-size: 10px; order: 3; }
+      .tt2p-find { display: flex; align-items: flex-start; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--divider-dark-color, #222); box-shadow: 0 1px 0 var(--divider-light-color, #474747); }
+      .tt2p-find:last-of-type { border-bottom: none; box-shadow: none; }
+      .tt2p-find > i { flex: none; width: 4px; align-self: stretch; border-radius: 2px; background: #888; }
+      .tt2p-find-bad > i { background: var(--default-red-color, #E54C19); }
+      .tt2p-find-warn > i { background: var(--default-orange-color, #F08C00); }
+      .tt2p-find-info > i { background: var(--default-blue-color, #74c0fc); }
+      .tt2p-find-good > i { background: var(--default-green-color, #82c91e); }
+      .tt2p-find-txt { flex: 1; min-width: 0; line-height: 1.45; }
+      .tt2p-find-txt b { font-size: 12.5px; color: var(--default-color, #fff) !important; }
+      .tt2p-find-cause { color: var(--default-color, #ccc) !important; }
+      .tt2p-find-act { color: var(--default-content-title-color, #9a9a9a) !important; font-style: italic; }
+      #tt2p-settings-tab-panel .tt2p-tp-body table { width: 100%; }
+
+      /* Gantt */
+      .tt2p-g-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .tt2p-g { min-width: 620px; }
+      .tt2p-g-row { display: flex; align-items: stretch; min-height: 26px; }
+      .tt2p-g-label { flex: 0 0 104px; padding: 2px 6px 2px 0; display: flex; flex-direction: column; justify-content: center; line-height: 1.15; overflow: hidden; }
+      .tt2p-g-label b { font-size: 11px; color: var(--default-color, #eee) !important; white-space: nowrap; }
+      .tt2p-g-label small { font-size: 9px; color: var(--default-content-title-color, #888) !important; white-space: nowrap; }
+      .tt2p-g-track { flex: 1; position: relative; min-height: 26px; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(14.2857% - 1px), rgba(255,255,255,.09) calc(14.2857% - 1px), rgba(255,255,255,.09) 14.2857%); border-left: 1px solid rgba(255,255,255,.25); }
+      .tt2p-g-axisrow { min-height: 18px; }
+      .tt2p-g-axis { min-height: 18px; background: none; }
+      .tt2p-g-axis span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 9px; color: var(--default-content-title-color, #999) !important; }
+      .tt2p-g-axis span:first-child { transform: none; }
+      .tt2p-g-axis span:last-child { transform: translateX(-100%); }
+      .tt2p-g-lane { margin: 8px 0 2px; padding-top: 6px; border-top: 1px solid var(--divider-dark-color, #222); box-shadow: 0 -1px 0 var(--divider-light-color, #474747); font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--default-content-title-color, #9a9a9a) !important; }
+      .tt2p-g-empty { padding: 4px 0 4px 104px; font-size: 11px; color: var(--default-content-title-color, #888) !important; }
+      .tt2p-g-bar { position: absolute; top: 4px; bottom: 4px; border-radius: 3px; overflow: hidden; display: flex; align-items: center; min-width: 4px; box-sizing: border-box; }
+      .tt2p-g-bar span { padding: 0 5px; font-size: 9px; font-weight: 700; white-space: nowrap; color: #fff !important; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+      .tt2p-g-plan { background: linear-gradient(180deg, #a82a2a, #7a1a1a); }
+      .tt2p-g-over { background: repeating-linear-gradient(45deg, #c82121 0 6px, #8f1a1a 6px 12px); }
+      .tt2p-g-need { background: repeating-linear-gradient(135deg, #2a2a2a 0 4px, #1a1a1a 4px 8px); border: 1px dashed #c82121; }
+      .tt2p-g-run { background: #3a3a3a; border: 1px solid #555; }
+      .tt2p-g-risk { background: #3a3a3a; border: 1px solid var(--default-orange-color, #F08C00); }
+      .tt2p-g-spawn { background: rgba(200,33,33,.32); border: 1px solid #c82121; }
+      .tt2p-g-cover { background: rgba(130,201,30,.35); border: 1px solid var(--default-green-color, #82c91e); }
+      .tt2p-g-start { background: rgba(240,140,0,.35); border: 1px solid var(--default-orange-color, #F08C00); }
+      .tt2p-g-flag { position: absolute; top: 2px; bottom: 2px; width: 0; border-left: 2px solid var(--default-orange-color, #F08C00); }
+      .tt2p-g-flag::before { content: ""; position: absolute; top: 0; left: 0; border: 4px solid transparent; border-left-color: var(--default-orange-color, #F08C00); border-right: 0; }
+      .tt2p-g-dot { position: absolute; top: 5px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: #161616; border: 2px solid var(--default-blue-color, #74c0fc); color: var(--default-blue-color, #74c0fc) !important; font: 700 9px/12px 'Inter', Arial, sans-serif; text-align: center; font-style: normal; box-sizing: border-box; cursor: help; }
+      .tt2p-g-col { position: absolute; bottom: 2px; top: 2px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; cursor: help; }
+      .tt2p-g-col u { display: flex; flex-direction: column; justify-content: flex-end; width: 80%; background: #4a4a4a; border-radius: 2px 2px 0 0; text-decoration: none; overflow: hidden; }
+      .tt2p-g-col s { display: block; background: var(--default-blue-color, #74c0fc); text-decoration: none; }
+      .tt2p-g-col em { font: 700 9px/11px 'Inter', Arial, sans-serif; font-style: normal; color: var(--default-color, #ddd) !important; }
+      .tt2p-g-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 10px; color: var(--default-content-title-color, #999) !important; }
+      .tt2p-g-legend span { display: inline-flex; align-items: center; gap: 5px; }
+      .tt2p-g-legend i { display: inline-block; width: 14px; height: 8px; border-radius: 2px; }
+      .tt2p-g-legend i.tt2p-g-dotkey { width: 12px; height: 12px; border-radius: 50%; background: #161616; border: 2px solid var(--default-blue-color, #74c0fc); color: var(--default-blue-color, #74c0fc); font: 700 8px/8px Arial; text-align: center; font-style: normal; }
+
+      /* full-screen detail overlay */
+      html.tt2p-ov-lock { overflow: hidden !important; }
+      #tt2p-mgr-overlay { position: fixed; inset: 0; z-index: 2147483000; display: none; flex-direction: column; background: var(--main-bg, #191919); color: var(--default-color, #ddd); }
+      #tt2p-mgr-overlay.tt2p-open { display: flex; }
+      .tt2p-ov-head { flex: none; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; box-sizing: border-box; }
+      .tt2p-ov-title { font: 700 13px 'Inter', Arial, sans-serif; color: var(--title-color, #fff) !important; white-space: nowrap; }
+      .tt2p-ov-nav { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+      .tt2p-ov-nav::-webkit-scrollbar { display: none; }
+      .tt2p-ov-nav button { flex: none; background: var(--tabs-bg-gradient, linear-gradient(180deg,#666 0%,#333 100%)); color: var(--default-tabs-color, #bbb) !important; border: 1px solid #111; border-radius: 5px 5px 0 0; padding: 6px 12px; font: 700 11px 'Inter', Arial, sans-serif; cursor: pointer; text-shadow: var(--tabs-text-shadow, 0 0 2px #000); }
+      .tt2p-ov-nav button.on { background: var(--tabs-active-bg-gradient, linear-gradient(180deg,#333 0%,#666 100%)); color: var(--default-tabs-active-color, #fff) !important; }
+      .tt2p-ov-body { flex: 1; overflow: auto; padding: 14px; box-sizing: border-box; -webkit-overflow-scrolling: touch; }
+      .tt2p-ov-body > .tt2p-tp { max-width: 1400px; margin-left: auto; margin-right: auto; }
+      #tt2p-mgr-overlay .tt2p-mgr-table { font-size: 12px; }
+      #tt2p-mgr-overlay .tt2p-mgr-table td, #tt2p-mgr-overlay .tt2p-mgr-table th { padding: 5px 8px; }
+      /* spawn mechanics + running OC list */
+      .tt2p-mgr-chip-dim { background: rgba(255,255,255,.06) !important; border-color: #555 !important; color: #a8a8a8 !important; }
+      .tt2p-mgr-chip-bad { background: rgba(136,34,34,.25) !important; border-color: #882222 !important; color: #ff9a9a !important; text-decoration: line-through; }
+      .tt2p-btn.on { background: var(--btn-active-background, linear-gradient(180deg,#000 0%,#333 100%)); border-color: var(--default-red-color, #c82121); }
+      .tt2p-oc-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+      .tt2p-oc-ctl span { color: var(--default-content-title-color, #999); }
+      .tt2p-oc-ctl input { flex: 1 1 160px; min-width: 0; background: var(--input-background-color, #111); color: var(--input-color, #fff); border: 1px solid var(--input-border-color, #444); border-radius: 5px; padding: 4px 8px; font: 11px 'Inter', Arial, sans-serif; }
+      .tt2p-oc-sec { margin: 12px 0 4px; padding: 6px 4px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--divider-dark-color, #222); box-shadow: 0 1px 0 var(--divider-light-color, #474747); color: var(--default-color, #eee) !important; }
+      .tt2p-oc-sec span { color: var(--default-content-title-color, #999) !important; font-weight: 400; }
+      details.tt2p-oc { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.08); border-radius: 4px; margin: 3px 0; }
+      details.tt2p-oc > summary { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; list-style: none; user-select: none; }
+      details.tt2p-oc > summary::-webkit-details-marker { display: none; }
+      details.tt2p-oc > summary::before { content: "\\25B8"; color: var(--default-content-title-color, #999); width: 10px; flex: none; }
+      details.tt2p-oc[open] > summary::before { content: "\\25BE"; }
+      details.tt2p-oc[open] { border-color: rgba(255,255,255,.22); }
+      .tt2p-oc-badge { flex: none; background: rgba(116,192,252,.14); border: 1px solid rgba(116,192,252,.35); border-radius: 3px; padding: 0 5px; font-size: 10px; font-weight: 700; color: var(--default-blue-color, #74c0fc) !important; }
+      .tt2p-oc-name { flex: 1; min-width: 0; font-weight: 700; font-size: 12.5px; color: var(--default-color, #fff) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tt2p-oc-time { flex: none; font-size: 11px; font-weight: 700; white-space: nowrap; }
+      .tt2p-oc-t-bad { color: #ff6b5e !important; }
+      .tt2p-oc-t-warn { color: var(--default-orange-color, #F08C00) !important; }
+      .tt2p-oc-t-ok { color: var(--default-content-title-color, #9aa5b5) !important; }
+      .tt2p-oc-warn { flex: none; font-size: 10px; font-weight: 700; color: var(--default-orange-color, #F08C00) !important; cursor: help; }
+      .tt2p-oc-q { flex: none; font-size: 10px; font-weight: 700; border-radius: 9px; padding: 0 7px; border: 1px solid; }
+      .tt2p-oc-q1 { color: #f0d44a !important; border-color: #8a7a1d; background: rgba(240,212,74,.1); }
+      .tt2p-oc-q2 { color: #f0a03c !important; border-color: #8a5a1d; background: rgba(240,160,60,.12); }
+      .tt2p-oc-q3 { color: #ff6b5e !important; border-color: #8a2a1d; background: rgba(255,107,94,.12); }
+      .tt2p-oc-body { padding: 4px 10px 10px 22px; }
+      .tt2p-oc-issues { margin: 4px 0 8px; padding-left: 16px; color: var(--default-orange-color, #F08C00) !important; line-height: 1.5; }
+      .tt2p-oc-issues li { color: var(--default-orange-color, #F08C00) !important; }
+      .tt2p-oc-bar { display: inline-block; width: 60px; height: 5px; background: #262626; border-radius: 3px; overflow: hidden; vertical-align: middle; }
+      .tt2p-oc-bar i { display: block; height: 100%; background: linear-gradient(90deg, #882222, #c82121); }
+      .tt2p-oc-tbl a { color: var(--default-blue-color, #74c0fc) !important; text-decoration: none; }
+      #tt2p-mgr-overlay .tt2p-mgr-table td .tt2p-mgr-bad { color: #ff8787 !important; font-weight: 700; }
+      tr.tt2p-ov-grp td { padding: 8px 8px 4px !important; background: rgba(255,255,255,.05); border-bottom: 1px solid rgba(255,255,255,.18) !important; font-size: 11px; color: var(--default-color, #ddd) !important; }
+
+      .tt2p-settings-row select {
+        background: var(--tt2p-deep); border: 1px solid rgba(255,255,255,0.2);
+        color: var(--tt2p-text); border-radius: 4px; padding: 4px 6px; font-size: 12px;
+      }
+      /* ---- member dashboard extras ---- */
+      .tt2p-g-active { background-image: linear-gradient(45deg, rgba(255,255,255,.22) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.22) 75%, transparent 75%, transparent), linear-gradient(180deg, #e04a4a, #c82121); background-size: 12px 12px, auto; animation: tt2p-dens-stripes .9s linear infinite; box-shadow: inset -1px 0 0 rgba(0,0,0,.6); }
+      .tt2p-g-queued { background: linear-gradient(180deg, #8a2424, #5f1818); box-shadow: inset -1px 0 0 rgba(0,0,0,.6); }
+      .tt2p-g-blocked { background: repeating-linear-gradient(45deg, #7b3fb3 0 6px, #55297f 6px 12px); box-shadow: inset -1px 0 0 rgba(0,0,0,.6); }
+      .tt2p-g-me { outline: 2px solid var(--default-orange-color, #F08C00); outline-offset: -2px; }
+      .tt2p-g-bar span { overflow: hidden; text-overflow: ellipsis; }
+      .tt2p-g-legend i.tt2p-g-flagkey { width: 0; height: 10px; border-left: 2px solid var(--default-orange-color, #F08C00); border-radius: 0; }
+      .tt2p-cpr-lv { margin: 8px 0 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--default-content-title-color, #999) !important; }
+      .tt2p-cpr-row { display: flex; gap: 10px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--divider-dark-color, #222); box-shadow: 0 1px 0 var(--divider-light-color, #474747); }
+      .tt2p-cpr-crime { flex: 0 0 150px; font-weight: 700; font-size: 11.5px; color: var(--default-color, #eee) !important; }
+      .tt2p-cpr-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+      .tt2p-cpr-chip { border: 1px solid; border-radius: 3px; padding: 1px 6px; font-size: 10.5px; white-space: nowrap; }
+      .tt2p-cpr-chip b { font-size: 11.5px; } .tt2p-cpr-chip i { font-style: normal; opacity: .65; }
+      .tt2p-cpr-ok { color: #5ad06e !important; border-color: #2f7d4a; background: rgba(90,208,110,.08); }
+      .tt2p-cpr-low { color: #ff8787 !important; border-color: #8a2f2f; background: rgba(200,33,33,.12); }
+      .tt2p-cpr-none { color: #8a8a8a !important; border-color: #3a3a3a; background: rgba(255,255,255,.03); }
+      @media (max-width: 560px) { .tt2p-cpr-row { flex-direction: column; gap: 4px; } .tt2p-cpr-crime { flex: none; } }
+      details.tt2p-oc-mine { border-color: var(--default-orange-color, #F08C00); }
+      .tt2p-settings-tab-btn { position: relative; }
+      .tt2p-settings-tab-btn[data-alert]::after { content: attr(data-alert); position: absolute; top: 2px; right: 4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: #c82121; color: #fff; font: 700 9px/14px Arial, sans-serif; text-align: center; }
+      #tt2p-mgr-overlay .tt2p-ov-body #tt2p-settings-panel { position: static; display: block; width: auto; max-width: 900px; max-height: none; overflow: visible; margin: 0 auto; box-sizing: border-box; }
     `;
     document.head.appendChild(style);
   }
@@ -1678,6 +2536,7 @@
       return {
         roleName, chance, isOpen, hasOccupant, planningPct, planningState,
         wrapperEl, joinBtnEl, requirement, qualifies, weight,
+        ...readSlotIdentity(headerEl, wrapperEl, hasOccupant),
       };
     });
 
@@ -1835,6 +2694,390 @@
     return { widths, gap };
   }
 
+  /* ============================================================================
+   * Density-line planning bar
+   * One fluid line split into one segment per role (CSS percentages, no pixel
+   * measuring, so it scales on phones/PC). Dark red = planned, red = planning,
+   * charcoal = queued, hatched = vacant. Member names under each segment.
+   * Hover (desktop) or tap (touch) shows details. Visual language borrowed from
+   * Torn's Crimes density bar, rebuilt with our own CSS because Torn's styles
+   * only load on crimes.php.
+   * ============================================================================ */
+  const DENS_ICONS = {
+    clock: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zm.7 3v3.4l2.5 1.5-.7 1.1-3.2-1.9V4.5h1.4z"/></svg>',
+    hourglass: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M4 1.5h8v1.2L9.3 8l2.7 5.3v1.2H4v-1.2L6.7 8 4 2.7z"/></svg>',
+    check: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M6.3 11.6 2.9 8.2l1.1-1.1 2.3 2.3 5.7-5.7 1.1 1.1z"/></svg>',
+    alert: '<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true"><path fill="currentColor" d="M7.1 2h1.8l-.4 7H7.5zM8 10.5a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2z"/></svg>',
+  };
+  const DENS_PIN = {
+    active:  { color: "#c82121", glow: "rgba(200,33,33,.7)",   icon: "clock" },
+    waiting: { color: "#9a9a9a", glow: "rgba(154,154,154,.4)", icon: "hourglass" },
+    blocked: { color: "#a05adc", glow: "rgba(160,90,220,.6)",  icon: "alert" },
+    stalled: { color: "#ff8787", glow: "rgba(255,135,135,.7)", icon: "alert" },
+    done:    { color: "#882222", glow: "rgba(136,34,34,.6)",   icon: "check" },
+    empty:   { color: "#666666", glow: "rgba(102,102,102,.3)", icon: "hourglass" },
+  };
+
+  // Member name lives in: .badgeContainer > .badge > span.textName___xxx
+  // (NOT the slotMenu links like "View Profile" / "Remove from Role").
+  function readMemberName(slot) {
+    const w = slot.wrapperEl;
+    if (!w || !slot.hasOccupant) return null;
+    const el = w.querySelector('[class*="textName__"]') || w.querySelector('[class*="badge__"] span');
+    const t = el && el.textContent ? el.textContent.trim() : "";
+    if (!t || /^(view profile|remove from role|join)$/i.test(t)) return null;
+    return t;
+  }
+
+  const DENS_BLOCK_PATTERNS = [
+    [/hospital/i, "Hospitalized"],
+    [/jail|federal/i, "In jail"],
+    [/abroad|travel|flying/i, "Traveling / abroad"],
+  ];
+  function readBlockage(slot) {
+    const out = [];
+    if (slot.planningState === "blocked") out.push("Missing a required item");
+    const w = slot.wrapperEl;
+    if (w) {
+      w.querySelectorAll('[aria-label],[title],[class*="hospital"],[class*="jail"],[class*="travel"],[class*="abroad"]').forEach((n) => {
+        if (n.closest(".tt2p-tidy-weight,.tt2p-role-prog-bar,.tt2p-star-badge")) return;
+        const hay = (n.getAttribute("aria-label") || "") + " " + (n.getAttribute("title") || "") + " " + (typeof n.className === "string" ? n.className : "");
+        for (const [re, label] of DENS_BLOCK_PATTERNS) {
+          if (re.test(hay) && !out.includes(label)) out.push(label);
+        }
+      });
+    }
+    return out;
+  }
+
+  /* Missing-item name: not present in the slot DOM, only in Torn's own hover popup.
+   * We (a) passively capture that popup whenever you hover a role, and (b) when you
+   * hover a blocked segment on our bar, briefly "hover" that role's header ourselves
+   * to make Torn render the popup, read it, then un-hover. Results are cached. */
+  const slotItemCache = new Map(); // "ocId:Role" -> { text|null, at }
+  function slotKey(slot) {
+    const card = slot.wrapperEl && slot.wrapperEl.closest("[data-oc-id]");
+    return card && slot.roleName ? card.dataset.ocId + ":" + slot.roleName : null;
+  }
+  function slotKeyFromHeader(h) {
+    const card = h.closest("[data-oc-id]");
+    const role = h.querySelector('span[class*="title__"]');
+    return card && role ? card.dataset.ocId + ":" + role.textContent.trim() : null;
+  }
+  function cachedItem(key) {
+    const c = key && slotItemCache.get(key);
+    if (!c) return null;
+    return Date.now() - c.at < (c.text ? 5 * 60 * 1000 : 60 * 1000) ? c : null;
+  }
+  function parseMissingItem(text) {
+    const m = /(?:missing|requires?|needs?)[^:]*:\s*(.+)$/i.exec(text);
+    return (m ? m[1] : text).trim().slice(0, 60);
+  }
+
+  const recentBodyAdds = [];
+  function harvestNativeTooltip(header) {
+    const now = Date.now();
+    const clean = (n) => (n && n.textContent ? n.textContent.replace(/\s+/g, " ").trim() : "");
+    const skip = (n) => !n || (n.closest && n.closest("#tt2p-tooltip,.tt2p-timeline-strip"));
+    const cands = recentBodyAdds.filter((r) => now - r.at < 1500).map((r) => r.node);
+    document.querySelectorAll('[role="tooltip"],[class*="tooltip___"],[class*="Tooltip___"]').forEach((n) => cands.push(n));
+    if (header.parentElement) header.parentElement.querySelectorAll('[role="tooltip"],[class*="tooltip"]').forEach((n) => cands.push(n));
+    for (let i = cands.length - 1; i >= 0; i--) {          // pass 1: wording match
+      if (skip(cands[i])) continue;
+      const t = clean(cands[i]);
+      if (t && t.length < 160 && /missing|require|need|item/i.test(t)) return t;
+    }
+    if (header.querySelector('[class*="inactive__"]')) {   // pass 2: blocked slot, take newest short popup
+      for (let i = cands.length - 1; i >= 0; i--) {
+        if (skip(cands[i])) continue;
+        const t = clean(cands[i]);
+        if (t && t.length < 100) return t;
+      }
+    }
+    return null;
+  }
+
+  function captureNativeTooltip(header) {
+    const key = slotKeyFromHeader(header);
+    if (!key) return;
+    const raw = harvestNativeTooltip(header);
+    if (raw) {
+      slotItemCache.set(key, { text: parseMissingItem(raw), at: Date.now() });
+      console.debug("[MM Manager] captured slot tooltip:", key, "->", raw);
+    }
+  }
+
+  function setupNativeTooltipCapture() {
+    if (setupNativeTooltipCapture.done) return;
+    setupNativeTooltipCapture.done = true;
+    // popups usually get portaled to <body>: remember what was just added there
+    new MutationObserver((muts) => {
+      const now = Date.now();
+      muts.forEach((m) => m.addedNodes.forEach((n) => {
+        if (n.nodeType === 1) {
+          recentBodyAdds.push({ node: n, at: now });
+          if (recentBodyAdds.length > 20) recentBodyAdds.shift();
+        }
+      }));
+    }).observe(document.body, { childList: true });
+    // Torn flags the hovered trigger with data-is-tooltip-opened="true"
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        const el = m.target;
+        if (!el || el.nodeType !== 1 || el.getAttribute("data-is-tooltip-opened") !== "true") continue;
+        const header = el.matches('button[class*="slotHeader__"]') ? el : el.closest('button[class*="slotHeader__"]');
+        if (header) setTimeout(() => captureNativeTooltip(header), 80);
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-is-tooltip-opened"] });
+  }
+
+  let probingTooltip = false;
+  function probeMissingItem(seg, done) {
+    if (!seg.key || probingTooltip || cachedItem(seg.key)) return;
+    const header = seg.header;
+    if (!header || !header.isConnected) return;
+    probingTooltip = true;
+    const fire = (list) => list.forEach(([type, bubbles]) => {
+      try { header.dispatchEvent(new MouseEvent(type, { bubbles, cancelable: true, view: window })); } catch (e) { /* ignore */ }
+    });
+    fire([["pointerover", true], ["mouseover", true], ["pointerenter", false], ["mouseenter", false], ["mousemove", true]]);
+    setTimeout(() => {
+      if (!cachedItem(seg.key)) {
+        const raw = harvestNativeTooltip(header);
+        slotItemCache.set(seg.key, { text: raw ? parseMissingItem(raw) : null, at: Date.now() });
+        if (raw) console.debug("[MM Manager] probed slot tooltip:", seg.key, "->", raw);
+      }
+      fire([["mouseout", true], ["pointerout", true], ["mouseleave", false], ["pointerleave", false]]);
+      probingTooltip = false;
+      done();
+    }, 180);
+  }
+
+  // Tooltip times are computed at hover time so they stay live between scans.
+  function densHrs(h, at) {
+    return Math.max(0, (h || 0) - (Date.now() - at) / 3600000);
+  }
+  function densT(h) {
+    return h <= 0.0003 ? "now" : formatHM(h);
+  }
+
+  function densSegTip(seg, at) {
+    const title = `<div class="tt2p-tt-title">${escapeHtml(seg.role)}</div>`;
+    if (seg.state === "vacant") {
+      const req = seg.req !== undefined ? `, <b>${seg.req}</b> CPR required` : "";
+      return `${title}<div class="tt2p-tt-row tt2p-tt-idle">Vacant role to be filled${req}</div>`;
+    }
+    let status;
+    if (seg.state === "complete") status = "<b>Completed</b>";
+    else if (seg.state === "active") status = `<b>Active</b> - ${densT(densHrs(seg.remainingH, at))} remaining`;
+    else if (seg.state === "queued") { const t = densT(densHrs(seg.startsInH, at)); status = `<b>In queue</b> - starts ${t === "now" ? "now" : "in " + t}`; }
+    else status = "<b>Not progressing</b>";
+    const item = cachedItem(seg.key);
+    const blockList = seg.blockage.map((b) => (b === "Missing a required item" && item && item.text ? "Missing: " + item.text : b));
+    const block = blockList.length
+      ? `<span class="tt2p-tt-fail">${escapeHtml(blockList.join(", "))}</span>`
+      : `<span class="tt2p-tt-pass">None</span>`;
+    return `${title}
+      <div class="tt2p-tt-row">Member: <b>${escapeHtml(seg.member || "Unknown")}</b></div>
+      <div class="tt2p-tt-row">Planning status: ${status}</div>
+      <div class="tt2p-tt-row">Blockage status: ${block}</div>`;
+  }
+
+  function densPinTip(pin, at) {
+    const q = densHrs(pin.queueH, at);
+    let a;
+    if (pin.occupied === 0) a = "Not started - waiting for the first member to join";
+    else if (pin.activeH !== null) a = `${escapeHtml(pin.role)}: <b>${densT(densHrs(pin.activeH, at))}</b> left on this segment`;
+    else if (pin.queueCount > 0) a = "No role is actively planning right now";
+    else a = "All joined members have finished planning";
+
+    let b = "";
+    if (pin.queueCount > 0) {
+      b = `<div class="tt2p-tt-row">Planning queue: <b>${densT(q)}</b> remaining (${pin.queueCount} member${pin.queueCount === 1 ? "" : "s"})</div>`;
+    }
+
+    let c;
+    if (pin.stalled) c = `<span class="tt2p-tt-fail">OC is stalled - needs action now</span>`;
+    else if (pin.vacant > 0 && pin.occupied === 0) c = `<span class="tt2p-tt-idle">Needs 1 member to join to begin planning</span>`;
+    else if (pin.vacant > 0) c = `<span class="tt2p-tt-idle">Stalls in <b>${densT(q)}</b> unless ${pin.vacant} vacant role${pin.vacant === 1 ? "" : "s"} get filled</span>`;
+    else c = `<span class="tt2p-tt-pass">Fully staffed - no stall risk</span>`;
+
+    return `<div class="tt2p-tt-title">Planning progress</div>
+      <div class="tt2p-tt-row">${a}</div>${b}<div class="tt2p-tt-row">${c}</div>`;
+  }
+
+  function isTouchMode() {
+    return !!(window.matchMedia && (window.matchMedia("(hover: none)").matches || window.matchMedia("(pointer: coarse)").matches));
+  }
+
+  // Phones/PDA: horizontally centered in the viewport, bottom edge just above the bar,
+  // so it can never run off the left/right edge. Falls back to just below if no room above.
+  function positionTooltipCentered(strip) {
+    const tt = ensureCustomTooltip();
+    const anchor = strip.querySelector(".tt2p-dens") || strip;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+    tt.style.maxWidth = Math.min(320, vw - margin * 2) + "px";
+    tt.style.left = "0px";
+    tt.style.top = "0px";
+    const tw = tt.offsetWidth;
+    const th = tt.offsetHeight;
+    const r = anchor.getBoundingClientRect();
+    let top = r.top - th - 6;
+    if (top < margin) top = Math.min(r.bottom + 6, vh - th - margin);
+    tt.style.left = Math.max(margin, Math.round((vw - tw) / 2)) + "px";
+    tt.style.top = Math.max(margin, Math.round(top)) + "px";
+  }
+
+  function bindDensityTooltips(strip) {
+    if (strip.__tt2pDensBound) return;
+    strip.__tt2pDensBound = true;
+    setupNativeTooltipCapture();
+    let touchTimer = null;
+    let hoverSeg = null;
+
+    const resolve = (target) => {
+      const st = strip.__tt2pDens;
+      if (!st || !target.closest) return null;
+      if (target.closest("[data-pin]")) return { html: densPinTip(st.pin, st.at), seg: null };
+      const segEl = target.closest("[data-seg]");
+      const seg = segEl ? st.segs[+segEl.dataset.seg] : null;
+      return seg ? { html: densSegTip(seg, st.at), seg } : null;
+    };
+    const hide = () => {
+      hoverSeg = null;
+      ensureCustomTooltip().classList.remove("tt2p-tooltip-visible");
+    };
+    if (!bindDensityTooltips.scrollBound) {
+      bindDensityTooltips.scrollBound = true;
+      window.addEventListener("scroll", () => ensureCustomTooltip().classList.remove("tt2p-tooltip-visible"), { passive: true });
+    }
+    const place = (e) => (isTouchMode() ? positionTooltipCentered(strip) : positionTooltip(e));
+    const show = (e, r) => {
+      hoverSeg = r.seg;
+      const tt = ensureCustomTooltip();
+      tt.innerHTML = r.html;
+      tt.classList.add("tt2p-tooltip-visible");
+      place(e);
+      if (r.seg && r.seg.state === "blocked") {
+        probeMissingItem(r.seg, () => {
+          const st = strip.__tt2pDens;
+          if (hoverSeg === r.seg && st) {
+            ensureCustomTooltip().innerHTML = densSegTip(r.seg, st.at);
+            if (isTouchMode()) positionTooltipCentered(strip);
+          }
+        });
+      }
+    };
+
+    strip.addEventListener("mouseover", (e) => {
+      if (isTouchMode()) return; // touch uses tap (click) below
+      const r = resolve(e.target);
+      if (r) show(e, r);
+    });
+    strip.addEventListener("mousemove", (e) => {
+      if (isTouchMode()) return;
+      if (e.target.closest && e.target.closest("[data-seg],[data-pin]")) positionTooltip(e);
+    });
+    strip.addEventListener("mouseout", () => { if (!isTouchMode()) hide(); });
+
+    // Touch devices (no hover): tap to show, tap elsewhere / wait to hide
+    strip.addEventListener("click", (e) => {
+      if (!isTouchMode()) return;
+      const r = resolve(e.target);
+      clearTimeout(touchTimer);
+      if (!r) return hide();
+      show(e, r);
+      touchTimer = setTimeout(hide, 5000);
+    });
+  }
+
+  function buildDensityBlock(strip, info, leftOffset) {
+    const slots = info.slots;
+    const n = slots.length || 1;
+    const segW = 100 / n;
+
+    const segs = slots.map((slot) => {
+      let state = "vacant";
+      if (slot.hasOccupant) {
+        if (slot.planningState === "complete") state = "complete";
+        else if (slot.planningState === "in_progress") state = "active";
+        else if (slot.planningState === "blocked") state = "blocked";
+        else state = "queued";
+      }
+      return {
+        role: slot.roleName || "Role",
+        state,
+        member: slot.hasOccupant ? readMemberName(slot) : null,
+        pct: slot.planningPct || 0,
+        remainingH: slot.timelineRemainingHours ?? null,
+        startsInH: slot.timelineStartsInHours ?? null,
+        blockage: slot.hasOccupant ? readBlockage(slot) : [],
+        req: slot.requirement,
+        key: slotKey(slot),
+        header: slot.wrapperEl ? slot.wrapperEl.querySelector('button[class*="slotHeader__"]') : null,
+      };
+    });
+
+    const activeIdx = segs.findIndex((s) => s.state === "active");
+    const pendingIdx = segs.findIndex((s) => s.state === "queued" || s.state === "blocked");
+    const occupied = segs.filter((s) => s.state !== "vacant");
+    const queueCount = segs.filter((s) => s.state === "active" || s.state === "queued").length;
+
+    let pos = 0;
+    let pinState = "empty";
+    if (activeIdx >= 0) {
+      pos = (activeIdx + segs[activeIdx].pct / 100) / n;
+      pinState = "active";
+    } else if (pendingIdx >= 0) {
+      pos = pendingIdx / n;
+      pinState = segs[pendingIdx].state === "blocked" ? "blocked" : "waiting";
+    } else if (occupied.length > 0) {
+      pos = (segs.map((s) => s.state).lastIndexOf("complete") + 1) / n;
+      pinState = "done";
+    }
+    if (info.stalled) pinState = "stalled";
+
+    strip.__tt2pDens = {
+      at: Date.now(),
+      segs,
+      pin: {
+        state: pinState,
+        role: activeIdx >= 0 ? segs[activeIdx].role : null,
+        activeH: activeIdx >= 0 ? segs[activeIdx].remainingH : null,
+        queueH: info.nextJoinerWaitHours || 0,
+        queueCount,
+        vacant: n - occupied.length,
+        occupied: occupied.length,
+        stalled: !!info.stalled,
+      },
+    };
+    bindDensityTooltips(strip);
+
+    const pc = DENS_PIN[pinState];
+    const segHtml = segs.map((s, i) => {
+      const fill = s.state === "active" ? `<i class="tt2p-dens-seg-fill" style="width:${s.pct.toFixed(1)}%"></i>` : "";
+      return `<div class="tt2p-dens-seg tt2p-dens-${s.state}" data-seg="${i}" style="left:${(i * segW).toFixed(3)}%;width:${segW.toFixed(3)}%;">${fill}</div>`;
+    }).join("");
+    let delimHtml = "";
+    for (let i = 1; i < n; i++) delimHtml += `<span class="tt2p-dens-delim" style="left:${(i * segW).toFixed(3)}%"></span>`;
+    const labelHtml = segs.map((s, i) =>
+      `<span class="tt2p-dens-label tt2p-dens-label-${s.state}" data-seg="${i}" style="left:${(i * segW).toFixed(3)}%;width:${segW.toFixed(3)}%;">${s.member ? escapeHtml(s.member) : ""}</span>`
+    ).join("");
+
+    return `<div class="tt2p-tl-strip-bars tt2p-dens-host" style="padding-left:${leftOffset}px;padding-right:${leftOffset}px;">
+      <div class="tt2p-dens">
+        <div class="tt2p-dens-pinrow"><div class="tt2p-dens-pin" data-pin="1" style="--tt2p-pin-left:${(pos * 100).toFixed(2)}%;--tt2p-pin-color:${pc.color};--tt2p-pin-glow:${pc.glow};">${DENS_ICONS[pc.icon]}</div></div>
+        <div class="tt2p-dens-outer">
+          <div class="tt2p-dens-inner"><div class="tt2p-dens-track">${segHtml}<div class="tt2p-dens-stripes"></div></div></div>
+          <div class="tt2p-dens-delims">${delimHtml}</div>
+        </div>
+        <div class="tt2p-dens-labels">${labelHtml}</div>
+      </div>
+    </div>`;
+  }
+
   function renderTimelineStrip(cardEl, info) {
     const descEl = cardEl.querySelector('p[class*="description__"]');
     const headerParent = cardEl.querySelector('p[class*="panelTitle__"]')?.closest('div[class*="panel__"]') || cardEl.firstElementChild;
@@ -1970,11 +3213,13 @@
       stallRowHtml = `<div class="tt2p-tl-stall-row tt2p-tl-stall-ok" style="padding-left:${leftOffset}px;">✅ Fully staffed — no stall risk right now.</div>`;
     }
 
+    const useDensity = getBarStyle() === "density";
     let barsHtml = "";
-    const { widths, gap } = measureRoleLayout(info.slots);
+    const { widths, gap } = useDensity ? { widths: [], gap: 8 } : measureRoleLayout(info.slots);
     const lastIdx = info.slots.length - 1;
 
     info.slots.forEach((slot, idx) => {
+      if (useDensity) return;
       let segClass = "tt2p-tl-seg-open";
       let label = "Open";
       let fillPct = 0;
@@ -2013,7 +3258,7 @@
         <span class="tt2p-tl-strip-title">${idLvlName}</span>
       </div>
       ${stallRowHtml}
-      <div class="tt2p-tl-strip-bars" style="gap:${gap}px;padding-left:${leftOffset}px;">${barsHtml}</div>
+      ${useDensity ? buildDensityBlock(strip, info, leftOffset) : `<div class="tt2p-tl-strip-bars" style="gap:${gap}px;padding-left:${leftOffset}px;">${barsHtml}</div>`}
     `;
     if (strip.__tt2pHtml !== stripHtml) {
       strip.innerHTML = stripHtml;
@@ -2065,6 +3310,8 @@
   function runPass() {
     if (document.hidden) return;
     if (!onCrimesTab()) return;
+    ensureSettingsTab();
+    if (settingsTabOpen) return; // Torn's OC list is hidden while our tab is open
     if (isMutatingSelf) return;
     if (nativeMenuIsOpen()) return;
 
@@ -2142,11 +3389,19 @@
     if (storeDirty) {
       saveStore(store);
       toastMessages.forEach(showToast);
-      const panel = document.getElementById("tt2p-settings-panel");
-      if (panel && panel.classList.contains("tt2p-open")) {
+      if (settingsTabOpen) {
         renderSettingsPanel();
         renderGrowthPanel();
       }
+    }
+
+    // remember what this tab shows (planning / recruiting) for the dashboard
+    const tabNow = currentNativeTab();
+    if (tabNow === "recruiting" || tabNow === "planning") {
+      lastNativeTab = tabNow;
+      updateOcCache(tabNow, cardInfos);
+      probeViewerItem(cardInfos);
+      updateTabAlert();
     }
 
     if (!dynamicSortEnabled) {
@@ -2405,7 +3660,7 @@
   }
 
   injectStyles();
-  ensureGearUi();
+  buildSettingsPanel();
 
   function initCrimesTab() {
     // Already watching a live, attached node -> nothing to do
@@ -2425,6 +3680,8 @@
       if (latestDebouncedPass) latestDebouncedPass();
     } else {
       cancelWait();
+      closeOverlay();
+      closeSettingsTab(null);
       stopObserver();
     }
   }
